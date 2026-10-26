@@ -75,26 +75,26 @@ class BugDetectorVisitor(ast.NodeVisitor):
             if isinstance(stmt, ast.Return):
                 has_returns.append(stmt)
 
-        if has_returns and len(node.body) > 1:
-            # If function has returns inside conditionals but last statement is not a return
-            last_stmt = node.body[-1]
-            if not isinstance(last_stmt, (ast.Return, ast.Raise)):
-                # If there's an if with return
-                if any(isinstance(s, ast.If) for s in node.body):
-                    self._add_issue(
-                        severity="MEDIUM",
-                        category="Logic Bug",
-                        line=node.lineno,
-                        problem=f"Potential implicit 'None' return path in '{node.name}'",
-                        explanation="The function returns a specific value in some execution paths, but falls off the end without an explicit return statement, returning None by default.",
-                        hint1="Trace all possible branches in your function. What is returned if none of the if conditions match?",
-                        hint2="Notice the end of the function body. Is there an explicit fallback return value?",
-                        hint3="Add an explicit 'return None' or return a default fallback value at the end of the function.",
-                        solution_code=f"    # At the end of {node.name}\n    return None  # or appropriate fallback/raise error",
-                        solution_exp="Ensure every execution path terminates with an explicit return statement or exception.",
-                        why_failed="Implicit None returns can cause subtle NoneType attribute or indexing errors downstream.",
-                        why_works="Explicit returns make the function contract clear and predictable."
-                    )
+        returns = [stmt for stmt in ast.walk(node) if isinstance(stmt, ast.Return)]
+
+        # If there are return statements, but not all paths explicitly return
+        if returns and not all(isinstance(node.body[-1], (ast.Return, ast.Raise)) for _ in [node.body]):
+            # Check if there's at least one conditional branch that might not lead to a return
+            if any(isinstance(stmt, ast.If) for stmt in ast.walk(node) if not isinstance(stmt, ast.FunctionDef)):
+                self._add_issue(
+                    rule_id="BUG_IMPLICIT_NONE_RETURN",
+                    severity="MEDIUM",
+                    category="Logic Bug",
+                    line=node.lineno,
+                    problem=f"Potential implicit 'None' return path in '{node.name}'",
+                    explanation="The function returns a specific value in some execution paths (e.g., within conditionals), but might fall off the end without an explicit return statement, implicitly returning `None` by default.",
+                    hint1="Trace all possible branches in your function. What value is returned if none of the explicit conditions match?",
+                    hint2="In Python, if a function finishes without encountering a `return` statement, it implicitly returns `None`.",
+                    hint3="Ensure every possible execution path concludes with an explicit `return` statement, or raises an exception, to make the function's output predictable.",
+                    solution_code=f"    # Ensure all paths return explicitly\n    return default_value # Or raise an exception, or return None explicitly",
+                    why_original_failed="Functions that implicitly return `None` can lead to subtle `TypeError`s or unexpected behavior when `None` is used in downstream operations.",
+                    why_new_works="Explicit `return` statements make the function's contract clear and its output predictable under all circumstances."
+                )
 
         # 3. Unreachable code after return or raise
         # Only check the current level of the function body, not nested blocks
@@ -342,6 +342,7 @@ def detect_bugs(code: str, language: str = "python") -> Dict[str, Any]:
             # Syntax errors become a CRITICAL issue
             issues.append({
                 "id": "syntax_err",
+                "rule_id": "SYNTAX_ERROR",
                 "severity": "CRITICAL",
                 "category": "Syntax Error",
                 "line": e.lineno or 1,
@@ -349,14 +350,14 @@ def detect_bugs(code: str, language: str = "python") -> Dict[str, Any]:
                 "explanation": f"The Python interpreter failed to parse the code at line {e.lineno or 1}: {e.msg}. The code cannot be executed.",
                 "hints": {
                     "hint1": "Review the syntax near line " + str(e.lineno or 1) + ".",
-                    "hint2": "Check for missing colons (:), unclosed parentheses, quotes, or indentation mismatch.",
-                    "hint3": "Make sure all open brackets/quotes have pairs and control statements end with a colon."
+                    "hint2": "Check for missing colons (:), unclosed parentheses, quotes, or indentation mismatch. Ensure all control structures are properly formed.",
+                    "hint3": "Verify that all opening brackets and quotes have corresponding closing pairs, and that control statements like `if`, `for`, `while`, `def` end with a colon. Pay attention to whitespace and indentation.",
                 },
                 "solution": {
-                    "code": "# Fix syntax error on line " + str(e.lineno or 1),
+                    "code": f"# Correct the syntax error on line {e.lineno or 1}",
                     "explanation": "Correct the syntax formatting to allow Python AST parsing.",
-                    "why_original_failed": f"Syntax error prevented Python compilation: {e.msg}",
-                    "why_new_works": "Valid Python syntax executes seamlessly."
+                    "why_original_failed": f"A syntax error prevented the Python interpreter from parsing and compiling the code, making it impossible to execute: {e.msg}",
+                    "why_new_works": "With valid Python syntax, the interpreter can successfully parse the code, allowing for execution and further analysis."
                 }
             })
 
