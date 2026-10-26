@@ -17,12 +17,13 @@ class BugDetectorVisitor(ast.NodeVisitor):
         self.used_vars = set()
         self.assigned_vars = set()
 
-    def _add_issue(self, severity: str, category: str, line: int, problem: str,
+    def _add_issue(self, rule_id: str, severity: str, category: str, line: int, problem: str,
                    explanation: str, hint1: str, hint2: str, hint3: str,
-                   solution_code: str, solution_exp: str, why_failed: str, why_works: str):
+                   solution_code: str, why_original_failed: str, why_new_works: str):
         self._issue_counter += 1
         self.issues.append({
-            "id": f"bug_{self._issue_counter}",
+            "id": f"bug_{self._issue_counter}", # Unique ID for this specific instance of the issue
+            "rule_id": rule_id, # Identifier for the type of rule triggered
             "severity": severity,  # CRITICAL, HIGH, MEDIUM, LOW, INFO
             "category": category,
             "line": line,
@@ -35,9 +36,9 @@ class BugDetectorVisitor(ast.NodeVisitor):
             },
             "solution": {
                 "code": solution_code,
-                "explanation": solution_exp,
-                "why_original_failed": why_failed,
-                "why_new_works": why_works
+                "explanation": explanation, # Default to general explanation if specific solution exp not provided
+                "why_original_failed": why_original_failed,
+                "why_new_works": why_new_works
             }
         })
 

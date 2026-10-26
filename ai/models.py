@@ -9,10 +9,10 @@ class HintSet(BaseModel):
 
 
 class SolutionDetail(BaseModel):
-    corrected_code: str
-    why_failed: str
-    why_works: str
-    edge_cases: str
+    code: str = Field(description="Corrected or optimized code snippet for the issue.")
+    explanation: str = Field(description="General explanation of the solution.")
+    why_original_failed: str = Field(description="Explanation of why the original code snippet failed or was suboptimal.")
+    why_new_works: str = Field(description="Explanation of why the new/corrected code snippet works or is an improvement.")
 
 
 class IssueModel(BaseModel):
