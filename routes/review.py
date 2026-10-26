@@ -2,6 +2,7 @@ import uuid
 from flask import Blueprint, request, jsonify, g
 from config import Config
 from extensions import limiter
+import logging
 import database
 from analyzer.syntax_analyzer import analyze_syntax
 from analyzer.ast_analyzer import analyze_ast
@@ -14,8 +15,8 @@ from analyzer.topology_3d import generate_3d_topology
 from analyzer.secret_redactor import scan_and_redact_secrets
 from ai.reviewer import get_ai_explanation
 
+logger = logging.getLogger("codecomprehension.routes.review")
 review_bp = Blueprint("review_bp", __name__)
-ALLOWED_LANGUAGES = {"python", "py", "cpp", "c++", "c", "java", "javascript", "js"}
 
 
 def make_error_response(code: str, message: str, status_code: int = 400):
@@ -36,7 +37,12 @@ def make_error_response(code: str, message: str, status_code: int = 400):
 def review_code():
     data = request.get_json(force=True, silent=True) or {}
     code = data.get("code", "")
-    language = str(data.get("language", "python")).strip().lower()
+    language_input = str(data.get("language", "python")).strip().lower()
+
+    request_id = getattr(g, "request_id", str(uuid.uuid4()))
+
+    # Normalize language input using aliases
+    language = Config.LANGUAGE_ALIASES.get(language_input, language_input)
 
     if not code or not code.strip():
         return make_error_response("EMPTY_CODE", "Empty code payload. Please write or paste code to analyze.", 400)
@@ -48,10 +54,11 @@ def review_code():
             413
         )
 
-    if language not in ALLOWED_LANGUAGES:
+    if language not in Config.SUPPORTED_LANGUAGES:
+        supported_langs = ", ".join(sorted([k for k in Config.SUPPORTED_LANGUAGES.keys()]))
         return make_error_response(
             "UNSUPPORTED_LANGUAGE",
-            f"Language '{language}' is not supported. Supported: Python, C++, C, Java, JavaScript.",
+            f"Language '{language_input}' is not supported. Supported languages are: {supported_langs}.",
             400
         )
 
@@ -74,53 +81,92 @@ def review_code():
             cached_payload = dict(cached["review_data"])
             cached_payload["review_id"] = cached["id"]
             cached_payload["cached"] = True
-            cached_payload["request_id"] = getattr(g, "request_id", str(uuid.uuid4()))
+            cached_payload["request_id"] = request_id
             if secret_warnings:
                 cached_payload["security_warnings"] = secret_warnings
             return jsonify(cached_payload)
 
-    # 1. Syntax Analysis
-    syntax_res = analyze_syntax(safe_code, language)
+    # Initialize all results with a default "not analyzed" state
+    syntax_res = {"status": "not_analyzed", "reason": "Syntax analysis not run."}
+    ast_res = {"status": "not_analyzed", "reason": "AST analysis not run."}
+    bugs_res = {"status": "not_analyzed", "reason": "Bug detection not run.", "issues": [], "score": 100, "summary": "No critical defects detected."}
+    complexity_res = {"status": "not_analyzed", "reason": "Complexity analysis not run."}
+    test_cases_res = {"status": "not_analyzed", "reason": "Test case generation not run."}
+    optimization_res = {"status": "not_analyzed", "reason": "Optimization analysis not run."}
+    explanation_res = {"status": "not_analyzed", "reason": "AI explanation not run."}
+    visualization_res = {"status": "not_analyzed", "reason": "Visualization pre-computation not run."}
+    topology_3d_res = {"status": "not_analyzed", "reason": "3D topology pre-computation not run."}
 
-    # 2. AST Analysis
-    ast_res = analyze_ast(safe_code, language)
+    # Coordinated Analysis Pipeline
+    try:
+        syntax_res = analyze_syntax(safe_code, language)
+    except Exception as e:
+        logger.error(f"Syntax analysis failed for request {request_id}: {e}")
+        syntax_res = {"status": "failed", "reason": f"Syntax analysis encountered an error: {str(e)}"}
 
-    # 3. Bug Detection & Scoring
-    bugs_res = detect_bugs(safe_code, language)
+    try:
+        ast_res = analyze_ast(safe_code, language)
+    except Exception as e:
+        logger.error(f"AST analysis failed for request {request_id}: {e}")
+        ast_res = {"status": "failed", "reason": f"AST analysis encountered an error: {str(e)}"}
 
-    # 4. Complexity Analysis
-    complexity_res = analyze_complexity(safe_code, language)
+    try:
+        bugs_res = detect_bugs(safe_code, language)
+    except Exception as e:
+        logger.error(f"Bug detection failed for request {request_id}: {e}")
+        bugs_res = {"status": "failed", "reason": f"Bug detection encountered an error: {str(e)}", "issues": [], "score": 100, "summary": "Bug detection failed due to an internal error."}
 
-    # 5. Test Case Generation
-    test_cases_res = generate_test_cases(safe_code, language)
+    try:
+        complexity_res = analyze_complexity(safe_code, language)
+    except Exception as e:
+        logger.error(f"Complexity analysis failed for request {request_id}: {e}")
+        complexity_res = {"status": "failed", "reason": f"Complexity analysis encountered an error: {str(e)}"}
 
-    # 6. Optimization Opportunities
-    optimization_res = analyze_optimization(safe_code, language)
+    try:
+        test_cases_res = generate_test_cases(safe_code, language)
+    except Exception as e:
+        logger.error(f"Test case generation failed for request {request_id}: {e}")
+        test_cases_res = {"status": "failed", "reason": f"Test case generation encountered an error: {str(e)}"}
 
-    # 7. AI / Mentor Explanation (using redacted safe code and configured provider)
-    explanation_res = get_ai_explanation(
-        safe_code,
-        language,
-        bugs_res.get("issues", []),
-        provider_name=canonical_provider
-    )
+    try:
+        optimization_res = analyze_optimization(safe_code, language)
+    except Exception as e:
+        logger.error(f"Optimization analysis failed for request {request_id}: {e}")
+        optimization_res = {"status": "failed", "reason": f"Optimization analysis encountered an error: {str(e)}"}
 
-    # 8. Visualization Frames Pre-computation
-    visualization_res = generate_visualization_frames(safe_code, language)
+    try:
+        explanation_res = get_ai_explanation(
+            safe_code,
+            language,
+            bugs_res.get("issues", []),
+            provider_name=canonical_provider
+        )
+    except Exception as e:
+        logger.error(f"AI explanation failed for request {request_id}: {e}")
+        explanation_res = {"status": "failed", "reason": f"AI explanation encountered an error: {str(e)}"}
 
-    # 9. Clean 2D Program Control Flow Graph Pre-computation
-    topology_3d_res = generate_3d_topology(safe_code, language, ast_res, complexity_res)
+    try:
+        visualization_res = generate_visualization_frames(safe_code, language)
+    except Exception as e:
+        logger.error(f"Visualization generation failed for request {request_id}: {e}")
+        visualization_res = {"status": "failed", "reason": f"Visualization generation encountered an error: {str(e)}"}
+
+    try:
+        topology_3d_res = generate_3d_topology(safe_code, language, ast_res, complexity_res)
+    except Exception as e:
+        logger.error(f"3D topology generation failed for request {request_id}: {e}")
+        topology_3d_res = {"status": "failed", "reason": f"3D topology generation encountered an error: {str(e)}"}
 
     review_payload = {
-        "success": True,
-        "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+        "success": True, # Overall API call success, not necessarily all analysis steps
+        "request_id": request_id,
         "language": language,
         "syntax": syntax_res,
         "ast": ast_res,
         "bugs": bugs_res,
-        "score": bugs_res.get("score", 100),
+        "score": bugs_res.get("score", 100), # Default to 100 if bug detection failed or no score
         "score_breakdown": bugs_res.get("score_breakdown", {}),
-        "summary": bugs_res.get("summary", ""),
+        "summary": bugs_res.get("summary", "Analysis completed with partial results due to internal errors in some modules."),
         "complexity": complexity_res,
         "test_cases": test_cases_res,
         "optimization": optimization_res,
@@ -134,21 +180,26 @@ def review_code():
 
     # Save redacted safe copy to SQLite Review History
     try:
+        # Extract complexity metrics carefully if analysis failed
+        time_complexity = complexity_res.get("time_complexity") if isinstance(complexity_res, dict) and "time_complexity" in complexity_res else "N/A"
+        space_complexity = complexity_res.get("space_complexity") if isinstance(complexity_res, dict) and "space_complexity" in complexity_res else "N/A"
+
         review_id = database.save_review(
             language=language,
             code=safe_code,
-            score=bugs_res.get("score", 100),
+            score=review_payload["score"],
             issue_count=len(bugs_res.get("issues", [])),
-            time_complexity=complexity_res.get("time_complexity", "O(1)"),
-            space_complexity=complexity_res.get("space_complexity", "O(1)"),
+            time_complexity=time_complexity,
+            space_complexity=space_complexity,
             review_data=review_payload,
             ai_provider=canonical_provider,
             prompt_version=database.ANALYZER_VERSION
         )
         review_payload["review_id"] = review_id
     except Exception as e:
+        logger.error(f"Database persistence failed for review request {request_id}: {e}")
         review_payload["review_id"] = None
-        review_payload["db_warning"] = "Review completed but database persistence failed."
+        review_payload["db_warning"] = f"Review completed but database persistence failed: {str(e)}"
 
     return jsonify(review_payload)
 

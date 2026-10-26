@@ -47,8 +47,58 @@ class AppSettings(BaseSettings):
 
     # Execution Sandbox
     EXECUTION_BACKEND: Literal["docker", "disabled", "local_dev_unsafe"] = "docker"
-    EXECUTION_TIMEOUT: float = 15.0
+    EXECUTION_TIMEOUT: float = 5.0
     MAX_OUTPUT_CHARS: int = 10000
+
+    # Language Registry
+    SUPPORTED_LANGUAGES: Dict[str, Dict[str, Any]] = {
+        "python": {
+            "extension": "py",
+            "docker_image": "python:3.10-slim-bullseye",
+            "compile_command": None,
+            "run_command": "python main.py",
+            "compile_timeout": 5.0,
+            "run_timeout": 5.0,
+        },
+        "javascript": {
+            "extension": "js",
+            "docker_image": "node:18-slim",
+            "compile_command": None,
+            "run_command": "node main.js",
+            "compile_timeout": 5.0,
+            "run_timeout": 5.0,
+        },
+        "java": {
+            "extension": "java",
+            "docker_image": "openjdk:17-jdk-slim",
+            "compile_command": "javac Main.java",
+            "run_command": "java Main",
+            "compile_timeout": 10.0,
+            "run_timeout": 5.0,
+        },
+        "c": {
+            "extension": "c",
+            "docker_image": "gcc:latest",
+            "compile_command": "gcc main.c -o main",
+            "run_command": "./main",
+            "compile_timeout": 10.0,
+            "run_timeout": 5.0,
+        },
+        "cpp": {
+            "extension": "cpp",
+            "docker_image": "gcc:latest",
+            "compile_command": "g++ main.cpp -o main",
+            "run_command": "./main",
+            "compile_timeout": 10.0,
+            "run_timeout": 5.0,
+        },
+    }
+
+    LANGUAGE_ALIASES: Dict[str, str] = {
+        "py": "python",
+        "js": "javascript",
+        "c++": "cpp",
+    }
 
     # Request limits
     MAX_CODE_LENGTH: int = 50000
@@ -142,6 +192,8 @@ class Config:
     EXECUTION_BACKEND = settings.EXECUTION_BACKEND
     EXECUTION_TIMEOUT = settings.EXECUTION_TIMEOUT
     MAX_OUTPUT_CHARS = settings.MAX_OUTPUT_CHARS
+    SUPPORTED_LANGUAGES = settings.SUPPORTED_LANGUAGES
+    LANGUAGE_ALIASES = settings.LANGUAGE_ALIASES
     MAX_CODE_LENGTH = settings.MAX_CODE_LENGTH
     MAX_CONTENT_LENGTH = settings.MAX_CONTENT_LENGTH
     HOST = settings.HOST
