@@ -1,0 +1,41 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+
+# SQLite Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+*.coverage.*
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Logs
+logs/
+*.log
+
+# Execution Temporary Files
+temp_exec_*
+scratch/
+
+# IDE / OS metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

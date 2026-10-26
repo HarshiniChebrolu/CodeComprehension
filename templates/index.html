@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeComprehension — AI Code Reviewer & Coding Mentor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="dark-theme">
+    <!-- Main Cohesive Application Container -->
+    <div class="app-container">
+        
+        <!-- Top HUD Header -->
+        <header class="hud-header">
+            <div class="hud-brand">
+                <div class="brand-icon">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="16 18 22 12 16 6"></polyline>
+                        <polyline points="8 6 2 12 8 18"></polyline>
+                        <circle cx="12" cy="12" r="2" fill="currentColor"></circle>
+                    </svg>
+                </div>
+                <div class="brand-text">
+                    <div class="brand-name">Code<span class="brand-accent">Comprehension</span></div>
+                    <div class="brand-tagline">Understand your code. Don't just fix it.</div>
+                </div>
+            </div>
+
+            <!-- Workspace Controls -->
+            <div class="hud-controls">
+                <!-- Preset Sample Dropdown -->
+                <div class="control-group">
+                    <label for="samplePreset">Presets</label>
+                    <select id="samplePreset" class="hud-select" aria-label="Load code sample">
+                        <optgroup label="Python Presets">
+                            <option value="find_max_bug">Find Max (Negative Array Bug)</option>
+                            <option value="two_sum_bug">Two Sum (Self-Pair & O(n²) Bug)</option>
+                            <option value="bubble_sort_vis">Bubble Sort (Algorithm Visualizer)</option>
+                            <option value="binary_search_bug">Binary Search (Off-by-One)</option>
+                            <option value="unsafe_dict_access">Safe Dict Access (KeyError Risk)</option>
+                            <option value="fib_recursion">Fibonacci (O(2ⁿ) Recursion)</option>
+                        </optgroup>
+                        <optgroup label="C++ Presets">
+                            <option value="cpp_two_sum_bug">C++ Two Sum (Self-Pair Bug)</option>
+                            <option value="cpp_preprocessor_bug">C++ Header & Preprocessor Typo (#incluude)</option>
+                            <option value="cpp_bubble_sort">C++ Bubble Sort (Vectors & IO)</option>
+                        </optgroup>
+                        <optgroup label="C Presets">
+                            <option value="c_reverse_array">C Pointer Reverse Array (Off-by-One)</option>
+                        </optgroup>
+                        <optgroup label="Java Presets">
+                            <option value="java_string_equals">Java String Equals Bug (== vs .equals())</option>
+                            <option value="java_find_max">Java Array Max (Negative Numbers)</option>
+                        </optgroup>
+                        <optgroup label="JavaScript Presets">
+                            <option value="js_two_sum">JavaScript Two Sum (Loose Equality Bug)</option>
+                        </optgroup>
+                    </select>
+                </div>
+
+                <!-- Language Selector -->
+                <div class="control-group">
+                    <label for="languageSelect">Language</label>
+                    <select id="languageSelect" class="hud-select" aria-label="Programming language">
+                        <option value="python" selected>Python</option>
+                        <option value="cpp">C++</option>
+                        <option value="c">C</option>
+                        <option value="java">Java</option>
+                        <option value="javascript">JavaScript</option>
+                    </select>
+                </div>
+
+                <!-- Sandbox Security Badge -->
+                <div class="security-pill" title="Subprocess security jail active with 3s timeout">
+                    <span class="security-dot"></span>
+                    <span class="security-text">Isolated Sandbox</span>
+                </div>
+
+                <!-- History Toggle -->
+                <button id="historyToggleBtn" class="hud-btn-ghost" title="Review History">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    <span>History</span>
+                </button>
+
+                <!-- Sandbox Run Button -->
+                <button id="runCodeBtn" class="hud-btn-secondary" title="Execute code in sandbox">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    <span>Run Sandbox</span>
+                </button>
+
+                <!-- Primary Review Action -->
+                <button id="reviewBtn" class="hud-btn-primary" title="Analyze and Review Code">
+                    <span class="btn-spinner" id="reviewSpinner"></span>
+                    <svg class="btn-icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <path d="M2 12h5l3 8 4-16 3 8h5"></path>
+                    </svg>
+                    <span id="reviewBtnText">Review Code</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Workspace (Single Cohesive Layout) -->
+        <main class="main-workspace">
+            
+            <!-- Left Pane: Code Studio -->
+            <section class="code-studio-pane">
+                <div class="editor-hud-bar">
+                    <div class="editor-file-info">
+                        <span class="file-icon">🐍</span>
+                        <span id="activeFileName" class="file-name">main.py</span>
+                        <span id="editorStatusPill" class="status-pill status-ready">Ready</span>
+                    </div>
+                    <div class="editor-toolbar">
+                        <span id="cursorPos" class="cursor-counter">Ln 1, Col 1</span>
+                        <button id="formatBtn" class="tool-btn" title="Format code">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="21" y1="10" x2="3" y2="10"></line>
+                                <line x1="21" y1="6" x2="3" y2="6"></line>
+                                <line x1="21" y1="14" x2="3" y2="14"></line>
+                                <line x1="21" y1="18" x2="3" y2="18"></line>
+                            </svg>
+                            Format
+                        </button>
+                        <button id="copyBtn" class="tool-btn" title="Copy code">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            Copy
+                        </button>
+                        <button id="clearBtn" class="tool-btn" title="Clear editor">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                            Clear
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Editor Wrapper with Line Numbers and Code Surface -->
+                <div class="editor-container" id="editorContainer">
+                    <div class="line-numbers" id="lineNumbers">1</div>
+                    <div class="editor-body-wrapper">
+                        <!-- Underlying syntax highlighted display -->
+                        <pre class="highlight-surface" id="highlightSurface" aria-hidden="true"><code id="highlightCode"></code></pre>
+                        <!-- Editable textarea overlay -->
+                        <textarea id="codeEditor" class="code-textarea" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Write or paste your code here to analyze..."></textarea>
+                    </div>
+                </div>
+
+                <!-- Integrated Bottom Execution Sandbox Cockpit -->
+                <div class="console-drawer" id="consoleDrawer">
+                    <div class="console-header" id="consoleHeaderToggle">
+                        <div class="console-title">
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                                <line x1="8" y1="21" x2="16" y2="21"></line>
+                                <line x1="12" y1="17" x2="12" y2="21"></line>
+                            </svg>
+                            <span>Sandbox Cockpit</span>
+                            <span id="consoleStatusBadge" class="console-badge">Idle</span>
+                            <span id="execDuration" class="exec-time"></span>
+                        </div>
+                        <div class="console-meta">
+                            <span class="sandbox-security-indicator">
+                                <span class="security-dot"></span>
+                                <span>Isolated Subprocess</span>
+                            </span>
+                            <button id="clearConsoleBtn" class="btn-text-sm" title="Clear terminal output">Clear</button>
+                        </div>
+                    </div>
+
+                    <!-- Sandbox Sub-navigation Tabs -->
+                    <div class="sandbox-nav-strip">
+                        <button class="sandbox-tab-btn active" data-sboxtab="output">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="4 17 10 11 4 5"></polyline>
+                                <line x1="12" y1="19" x2="20" y2="19"></line>
+                            </svg>
+                            <span>Terminal Output</span>
+                        </button>
+                        <button class="sandbox-tab-btn" data-sboxtab="topics">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                                <line x1="7" y1="7" x2="7.01" y2="7"></line>
+                            </svg>
+                            <span>Topics Involved</span>
+                            <span id="sboxTopicCount" class="sbox-count-pill">0</span>
+                        </button>
+                        <button class="sandbox-tab-btn" data-sboxtab="telemetry">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                            </svg>
+                            <span>Telemetry & Safety</span>
+                        </button>
+                        <button class="sandbox-tab-btn" data-sboxtab="stdin">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="14 9 9 4 4 9"></polyline>
+                                <path d="M20 20h-7a4 4 0 0 1-4-4V4"></path>
+                            </svg>
+                            <span>Custom STDIN</span>
+                        </button>
+                    </div>
+
+                    <div class="console-content" id="consoleContent">
+                        <!-- Sub-tab 1: Terminal Output -->
+                        <div id="sbox-panel-output" class="sbox-panel active">
+                            <div class="console-streams">
+                                <div class="stream-box stdout-box">
+                                    <div class="stream-label">
+                                        <span>STDOUT</span>
+                                        <span class="stream-status-tag" id="stdoutStatusTag">Buffer Ready</span>
+                                    </div>
+                                    <pre id="stdoutText" class="stream-text">// Execution output will appear here...</pre>
+                                </div>
+                                <div class="stream-box stderr-box">
+                                    <div class="stream-label">
+                                        <span>STDERR / DIAGNOSTICS</span>
+                                        <span class="stream-status-tag" id="stderrStatusTag">Clean</span>
+                                    </div>
+                                    <pre id="stderrText" class="stream-text"></pre>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Sub-tab 2: Topics & Concepts Involved Inside Code -->
+                        <div id="sbox-panel-topics" class="sbox-panel">
+                            <div class="sbox-topics-header">
+                                <h4>Topics & Computational Concepts Involved</h4>
+                                <p>Deep algorithmic, memory, and control topics active inside this execution run:</p>
+                            </div>
+                            <div id="sandboxTopicsContainer" class="sandbox-topics-grid">
+                                <div class="empty-topics-state">Run code in the Sandbox to inspect all detected topics and computational concepts.</div>
+                            </div>
+                        </div>
+
+                        <!-- Sub-tab 3: Telemetry & Safety Audit -->
+                        <div id="sbox-panel-telemetry" class="sbox-panel">
+                            <div class="telemetry-grid">
+                                <div class="telemetry-card">
+                                    <div class="telemetry-label">EXECUTION EXIT CODE</div>
+                                    <div class="telemetry-value" id="telemExitCode">--</div>
+                                    <div class="telemetry-sub" id="telemExitDesc">Subprocess termination status</div>
+                                </div>
+                                <div class="telemetry-card">
+                                    <div class="telemetry-label">CPU RUNTIME</div>
+                                    <div class="telemetry-value" id="telemRuntime">--</div>
+                                    <div class="telemetry-sub" id="telemRuntimeDesc">Precise execution duration</div>
+                                </div>
+                                <div class="telemetry-card">
+                                    <div class="telemetry-label">MEMORY PROFILE</div>
+                                    <div class="telemetry-value" id="telemMemory">Heap / Stack</div>
+                                    <div class="telemetry-sub" id="telemMemoryDesc">Bounded within 64MB sandbox envelope</div>
+                                </div>
+                                <div class="telemetry-card">
+                                    <div class="telemetry-label">SAFETY AUDIT</div>
+                                    <div class="telemetry-value" style="color: #10b981;" id="telemSafety">PASSED</div>
+                                    <div class="telemetry-sub" id="telemSafetyDesc">0 unauthorized system writes or sockets</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Sub-tab 4: STDIN Configuration -->
+                        <div id="sbox-panel-stdin" class="sbox-panel">
+                            <div class="console-stdin-bar">
+                                <label for="stdinInput">STDIN INPUT STREAM:</label>
+                                <input type="text" id="stdinInput" class="stdin-field" placeholder="Provide newline-separated or whitespace inputs to pass into program standard input...">
+                            </div>
+                            <div class="stdin-presets">
+                                <span class="stdin-preset-label">Quick Presets:</span>
+                                <button type="button" class="stdin-preset-btn" data-val="5&#10;1 2 3 4 5">Array Sample</button>
+                                <button type="button" class="stdin-preset-btn" data-val="10 20">Two Integers</button>
+                                <button type="button" class="stdin-preset-btn" data-val="hello world">String Line</button>
+                                <button type="button" class="stdin-preset-btn" data-val="">Clear</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Pane: The Mentor & Inspection Hub -->
+            <section class="mentor-hub-pane">
+                
+                <!-- Hub Navigation Tabs (Cohesive single workspace) -->
+                <nav class="hub-nav">
+                    <button class="hub-tab active" data-tab="mentor">
+                        <span class="tab-indicator"></span>
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+                        </svg>
+                        <span>Mentor & Hints</span>
+                        <span id="issueCountPill" class="hub-count-pill">0</span>
+                    </button>
+                    <button class="hub-tab" data-tab="score">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 20V10M12 20V4M6 20v-6"></path>
+                        </svg>
+                        <span>Quality Score</span>
+                        <span id="scoreSummaryPill" class="hub-score-pill">--</span>
+                    </button>
+                    <button class="hub-tab" data-tab="explanation">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        </svg>
+                        <span>Explanation</span>
+                    </button>
+                    <button class="hub-tab" data-tab="ast">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="7" height="7"></rect>
+                            <rect x="14" y="3" width="7" height="7"></rect>
+                            <rect x="14" y="14" width="7" height="7"></rect>
+                            <rect x="3" y="14" width="7" height="7"></rect>
+                        </svg>
+                        <span>AST Insight</span>
+                    </button>
+                    <button class="hub-tab" data-tab="complexity">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <polyline points="12 6 12 12 14 14"></polyline>
+                        </svg>
+                        <span>Complexity</span>
+                    </button>
+                    <button class="hub-tab" data-tab="tests">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <path d="m9 15 2 2 4-4"></path>
+                        </svg>
+                        <span>Test Cases</span>
+                    </button>
+                    <button class="hub-tab" data-tab="optimization">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                        </svg>
+                        <span>Optimization</span>
+                    </button>
+                    <button class="hub-tab" data-tab="visualizer">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        <span>Visual Execution</span>
+                    </button>
+                    <button class="hub-tab" data-tab="threed">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                        <span>Code Control Flow</span>
+                        <span class="hub-count-pill" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8;">FLOW</span>
+                    </button>
+                </nav>
+
+                <!-- Hub Panels Area -->
+                <div class="hub-panel-container">
+                    
+                    <!-- PANEL 1: Mentor & Progressive Hints -->
+                    <div id="panel-mentor" class="hub-panel active">
+                        <div class="panel-header-banner">
+                            <div class="banner-title">
+                                <span class="badge-mentor">AI CODING MENTOR</span>
+                                <h2>Progressive Guidance Engine</h2>
+                            </div>
+                            <p class="banner-subtext">The mentor will not immediately hand you the answer. Use progressive hints to deduce the solution step-by-step.</p>
+                        </div>
+
+                        <!-- Review Summary Bar -->
+                        <div id="reviewSummaryBar" class="review-summary-bar">
+                            <div class="summary-status-icon">💡</div>
+                            <div class="summary-details">
+                                <div class="summary-title" id="summaryStatusTitle">Awaiting Code Submission</div>
+                                <div class="summary-desc" id="summaryStatusDesc">Click "Review Code" above to trigger static AST analysis, bug hunting, and complexity derivation.</div>
+                            </div>
+                        </div>
+
+                        <!-- Detected Issues List -->
+                        <div id="issuesListContainer" class="issues-list">
+                            <div class="empty-state">
+                                <div class="empty-icon">🔍</div>
+                                <h3>No Review Run Yet</h3>
+                                <p>Select an example from the Presets dropdown or type your own code and click <strong>Review Code</strong>.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PANEL 2: Quality Score Breakdown -->
+                    <div id="panel-score" class="hub-panel">
+                        <div class="score-grid">
+                            <!-- Overall Score Card -->
+                            <div class="overall-score-card">
+                                <h3>Overall Code Quality</h3>
+                                <div class="score-circle-container">
+                                    <svg viewBox="0 0 120 120" class="score-ring-svg">
+                                        <circle cx="60" cy="60" r="50" class="score-ring-bg"></circle>
+                                        <circle cx="60" cy="60" r="50" class="score-ring-val" id="scoreRingCircle"></circle>
+                                    </svg>
+                                    <div class="score-circle-text">
+                                        <span id="scoreNumberVal" class="score-number">--</span>
+                                        <span class="score-max">/ 100</span>
+                                    </div>
+                                </div>
+                                <div id="scoreVerdict" class="score-verdict">Awaiting review...</div>
+                            </div>
+
+                            <!-- Category Metrics Breakdown -->
+                            <div class="category-breakdown-card">
+                                <h3>Category Breakdown</h3>
+                                <div class="metric-bars-list" id="metricBarsList">
+                                    <!-- Rendered dynamically -->
+                                    <div class="metric-row">
+                                        <div class="metric-header">
+                                            <span>Correctness</span>
+                                            <span id="metricVal-correctness">--</span>
+                                        </div>
+                                        <div class="progress-track"><div id="metricBar-correctness" class="progress-fill" style="width: 0%"></div></div>
+                                    </div>
+                                    <div class="metric-row">
+                                        <div class="metric-header">
+                                            <span>Readability</span>
+                                            <span id="metricVal-readability">--</span>
+                                        </div>
+                                        <div class="progress-track"><div id="metricBar-readability" class="progress-fill" style="width: 0%"></div></div>
+                                    </div>
+                                    <div class="metric-row">
+                                        <div class="metric-header">
+                                            <span>Maintainability</span>
+                                            <span id="metricVal-maintainability">--</span>
+                                        </div>
+                                        <div class="progress-track"><div id="metricBar-maintainability" class="progress-fill" style="width: 0%"></div></div>
+                                    </div>
+                                    <div class="metric-row">
+                                        <div class="metric-header">
+                                            <span>Efficiency</span>
+                                            <span id="metricVal-efficiency">--</span>
+                                        </div>
+                                        <div class="progress-track"><div id="metricBar-efficiency" class="progress-fill" style="width: 0%"></div></div>
+                                    </div>
+                                    <div class="metric-row">
+                                        <div class="metric-header">
+                                            <span>Security</span>
+                                            <span id="metricVal-security">--</span>
+                                        </div>
+                                        <div class="progress-track"><div id="metricBar-security" class="progress-fill" style="width: 0%"></div></div>
+                                    </div>
+                                    <div class="metric-row">
+                                        <div class="metric-header">
+                                            <span>Best Practices</span>
+                                            <span id="metricVal-best_practices">--</span>
+                                        </div>
+                                        <div class="progress-track"><div id="metricBar-best_practices" class="progress-fill" style="width: 0%"></div></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PANEL 3: Code Explanation -->
+                    <div id="panel-explanation" class="hub-panel">
+                        <div class="explanation-container">
+                            <div class="expl-card">
+                                <div class="expl-card-title">
+                                    <span class="expl-icon">🎯</span>
+                                    <h3>Core Purpose</h3>
+                                </div>
+                                <p id="explPurpose" class="expl-text">The submitted code will be broken down here in clear developer terms.</p>
+                            </div>
+
+                            <div class="expl-two-col">
+                                <div class="expl-card">
+                                    <div class="expl-card-title">
+                                        <span class="expl-icon">⚙️</span>
+                                        <h3>Algorithm & Strategy</h3>
+                                    </div>
+                                    <p id="explAlgorithm" class="expl-text">--</p>
+                                </div>
+                                <div class="expl-card">
+                                    <div class="expl-card-title">
+                                        <span class="expl-icon">📦</span>
+                                        <h3>Data Structures Used</h3>
+                                    </div>
+                                    <div id="explDataStructures" class="tags-row"></div>
+                                </div>
+                            </div>
+
+                            <div class="expl-card">
+                                <div class="expl-card-title">
+                                    <span class="expl-icon">🪜</span>
+                                    <h3>Step-by-Step Execution Journey</h3>
+                                </div>
+                                <ol id="explStepList" class="step-journey-list"></ol>
+                            </div>
+
+                            <div class="expl-card mentor-tip-card">
+                                <div class="expl-card-title">
+                                    <span class="expl-icon">🎓</span>
+                                    <h3>Mentor Coaching Note</h3>
+                                </div>
+                                <p id="explMentorNote" class="expl-text-italic">Analyze code to receive customized advice.</p>
+                                <div id="explProviderBadge" class="expl-provider-badge"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PANEL 4: AST Insight -->
+                    <div id="panel-ast" class="hub-panel">
+                        <div class="ast-container">
+                            <div class="ast-metrics-banner">
+                                <div class="ast-metric-box">
+                                    <span class="ast-m-val" id="astFuncCount">0</span>
+                                    <span class="ast-m-lbl">Functions</span>
+                                </div>
+                                <div class="ast-metric-box">
+                                    <span class="ast-m-val" id="astLoopCount">0</span>
+                                    <span class="ast-m-lbl">Loops</span>
+                                </div>
+                                <div class="ast-metric-box">
+                                    <span class="ast-m-val" id="astBranchCount">0</span>
+                                    <span class="ast-m-lbl">Branches</span>
+                                </div>
+                                <div class="ast-metric-box">
+                                    <span class="ast-m-val" id="astDepthCount">0</span>
+                                    <span class="ast-m-lbl">Max Depth</span>
+                                </div>
+                            </div>
+
+                            <div class="ast-flow-section">
+                                <h3>Abstract Syntax Flow Pipeline</h3>
+                                <p class="section-sub">Shows how the compiler evaluates program execution sequence:</p>
+                                <div id="astFlowPipeline" class="ast-flow-pipeline">
+                                    <!-- Flow blocks rendered here -->
+                                </div>
+                            </div>
+
+                            <div class="ast-tree-details">
+                                <h3>AST Nodes Inspection</h3>
+                                <div id="astNodesList" class="ast-nodes-table">
+                                    <!-- Nodes table rendered here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PANEL 5: Complexity Analysis -->
+                    <div id="panel-complexity" class="hub-panel">
+                        <div class="complexity-container">
+                            <div class="complexity-overview-cards">
+                                <div class="comp-card">
+                                    <div class="comp-label">TIME COMPLEXITY</div>
+                                    <div class="comp-big-val" id="compTimeVal">--</div>
+                                    <div class="comp-desc" id="compTimeReason">Calculated from loop depths & recursion structures.</div>
+                                </div>
+                                <div class="comp-card">
+                                    <div class="comp-label">SPACE COMPLEXITY</div>
+                                    <div class="comp-big-val" id="compSpaceVal">--</div>
+                                    <div class="comp-desc" id="compSpaceReason">Auxiliary structures & stack activation frames.</div>
+                                </div>
+                            </div>
+
+                            <!-- Best / Average / Worst Case Scenario Matrix -->
+                            <div class="scenario-matrix-card">
+                                <h3>Best, Average & Worst Case Scenarios</h3>
+                                <div class="scenario-grid">
+                                    <div class="scenario-box scenario-best">
+                                        <div class="scenario-tag">BEST CASE</div>
+                                        <div class="scenario-bound" id="scenBestBound">O(1)</div>
+                                        <p class="scenario-desc" id="scenBestDesc">--</p>
+                                    </div>
+                                    <div class="scenario-box scenario-avg">
+                                        <div class="scenario-tag">AVERAGE CASE</div>
+                                        <div class="scenario-bound" id="scenAvgBound">O(n)</div>
+                                        <p class="scenario-desc" id="scenAvgDesc">--</p>
+                                    </div>
+                                    <div class="scenario-box scenario-worst">
+                                        <div class="scenario-tag">WORST CASE</div>
+                                        <div class="scenario-bound" id="scenWorstBound">O(n²)</div>
+                                        <p class="scenario-desc" id="scenWorstDesc">--</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="comp-card">
+                                <h3>Performance Hotspots</h3>
+                                <ul id="compHotspotsList" class="hotspots-list">
+                                    <li>Run review to identify algorithmic hotspots.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PANEL 6: Test Cases Generator & Runner -->
+                    <div id="panel-tests" class="hub-panel">
+                        <div class="tests-container">
+                            <div class="tests-header-action">
+                                <div>
+                                    <h3>Automated Test Suite</h3>
+                                    <p class="section-sub">Includes Normal, Edge, Difficult (bug-hunting), and Stress cases.</p>
+                                </div>
+                                <button id="runAllTestsBtn" class="hud-btn-primary">
+                                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="20 6 9 17 4 12"></polyline>
+                                    </svg>
+                                    <span>Run All Test Cases</span>
+                                </button>
+                            </div>
+
+                            <div id="testSummaryPills" class="test-stats-row">
+                                <span class="test-pill pill-total">Total: <strong id="tcTotalCount">0</strong></span>
+                                <span class="test-pill pill-passed">Passed: <strong id="tcPassedCount">0</strong></span>
+                                <span class="test-pill pill-failed">Failed: <strong id="tcFailedCount">0</strong></span>
+                            </div>
+
+                            <div id="testCardsContainer" class="test-cards-list">
+                                <!-- Test cards rendered here -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PANEL 7: Optimization Engine -->
+                    <div id="panel-optimization" class="hub-panel">
+                        <div class="optimization-container">
+                            <div class="opt-comparison-banner">
+                                <div class="opt-col opt-col-before">
+                                    <div class="opt-label">CURRENT APPROACH</div>
+                                    <div class="opt-big" id="optCurrentComp">O(n²)</div>
+                                </div>
+                                <div class="opt-arrow">➔</div>
+                                <div class="opt-col opt-col-after">
+                                    <div class="opt-label">OPTIMIZED UPGRADE</div>
+                                    <div class="opt-big" id="optTargetComp">O(n)</div>
+                                </div>
+                            </div>
+
+                            <div class="opt-details-card">
+                                <h3 id="optTitle">Optimization Opportunity</h3>
+                                <p id="optSummary" class="opt-summary-p">--</p>
+
+                                <div class="opt-meta-grid">
+                                    <div class="opt-meta-item">
+                                        <strong>What Changes:</strong>
+                                        <span id="optWhatChanges">--</span>
+                                    </div>
+                                    <div class="opt-meta-item">
+                                        <strong>Why It Improves:</strong>
+                                        <span id="optWhyImproves">--</span>
+                                    </div>
+                                    <div class="opt-meta-item">
+                                        <strong>Trade-offs:</strong>
+                                        <span id="optTradeOffs">--</span>
+                                    </div>
+                                    <div class="opt-meta-item">
+                                        <strong>When to Use:</strong>
+                                        <span id="optWhenUseful">--</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Code Comparison Diff & Reveal -->
+                            <div class="opt-actions-bar">
+                                <button id="toggleOptimizedCodeBtn" class="hud-btn-secondary">Show Optimized Code</button>
+                                <button id="applyOptimizedBtn" class="hud-btn-primary">Apply to Editor</button>
+                            </div>
+
+                            <div id="optimizedCodeWrapper" class="opt-code-wrapper" style="display: none;">
+                                <div class="diff-header">Unified Optimization Diff:</div>
+                                <pre id="optimizedDiffPre" class="diff-pre"></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PANEL 8: Visual Code Execution -->
+                    <div id="panel-visualizer" class="hub-panel">
+                        <div class="visualizer-container">
+                            <div class="vis-header-bar">
+                                <div>
+                                    <h3 id="visAlgoTitle">Algorithm Visualizer</h3>
+                                    <p class="section-sub" id="visAlgoSub">Step through execution states and array mutations.</p>
+                                </div>
+                                <div class="vis-step-badge">
+                                    Step <span id="visCurrentStep">0</span> / <span id="visTotalSteps">0</span>
+                                </div>
+                            </div>
+
+                            <!-- Visualization Stage Canvas / Bars -->
+                            <div class="vis-stage" id="visStage">
+                                <div class="vis-empty">Click "Review Code" to generate execution visualization.</div>
+                            </div>
+
+                            <!-- Step Explanation Banner -->
+                            <div class="vis-message-banner">
+                                <div class="vis-msg-tag">STEP DETAILS</div>
+                                <div id="visStepMessage" class="vis-msg-text">Awaiting execution...</div>
+                                <div id="visCodeLine" class="vis-code-pill"></div>
+                            </div>
+
+                            <!-- Visualizer Control Bar -->
+                            <div class="vis-controls-bar">
+                                <button id="visRestartBtn" class="vis-btn" title="Restart">
+                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="1 4 1 10 7 10"></polyline>
+                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                                    </svg>
+                                </button>
+                                <button id="visStepBackBtn" class="vis-btn" title="Step Back">
+                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                        <polygon points="19 20 9 12 19 4 19 20"></polygon>
+                                        <line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2"></line>
+                                    </svg>
+                                </button>
+                                <button id="visPlayPauseBtn" class="vis-btn vis-btn-play" title="Play / Pause">
+                                    <svg id="playIcon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                    </svg>
+                                    <svg id="pauseIcon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display: none;">
+                                        <rect x="6" y="4" width="4" height="16"></rect>
+                                        <rect x="14" y="4" width="4" height="16"></rect>
+                                    </svg>
+                                </button>
+                                <button id="visStepForwardBtn" class="vis-btn" title="Step Forward">
+                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                        <polygon points="5 4 15 12 5 20 5 4"></polygon>
+                                        <line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2"></line>
+                                    </svg>
+                                </button>
+
+                                <div class="vis-speed-control">
+                                    <label for="visSpeedSelect">Speed:</label>
+                                    <select id="visSpeedSelect" class="hud-select-sm">
+                                        <option value="1200">0.5x</option>
+                                        <option value="600" selected>1.0x</option>
+                                        <option value="250">2.0x</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PANEL 9: Clean Program Control Flow & Execution Pipeline -->
+                    <div id="panel-threed" class="hub-panel">
+                        <div class="threed-container">
+                            <div class="threed-header-bar">
+                                <div>
+                                    <span class="badge-mentor" style="color: #38bdf8;">CONTROL FLOW ENGINE</span>
+                                    <h3>Program Control Flow & Execution Trace</h3>
+                                    <p class="section-sub">Step-by-step visual control flow graph: tracks execution order, loops, decision branching, and memory state.</p>
+                                </div>
+                                <div class="threed-stats-pill">
+                                    <span id="threedNodeCount">0</span> Flow Blocks • <span id="threedConduitCount">0</span> Transitions
+                                </div>
+                            </div>
+
+                            <!-- Moving Flow Player Controller Bar -->
+                            <div class="threed-flow-bar">
+                                <div class="flow-controls-left">
+                                    <button id="playFlow3DBtn" class="flow-ctrl-btn primary" title="Play / Pause Step-by-Step Control Flow">
+                                        <svg id="playFlow3DIcon" viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                        </svg>
+                                        <svg id="pauseFlow3DIcon" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="display: none;">
+                                            <rect x="6" y="4" width="4" height="16"></rect>
+                                            <rect x="14" y="4" width="4" height="16"></rect>
+                                        </svg>
+                                        <span id="playFlow3DLabel">Play Flow</span>
+                                    </button>
+                                    <button id="stepBack3DBtn" class="flow-ctrl-btn" title="Step to Previous Instruction">
+                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polygon points="19 20 9 12 19 4 19 20"></polygon>
+                                            <line x1="5" y1="19" x2="5" y2="5"></line>
+                                        </svg>
+                                        <span>Prev</span>
+                                    </button>
+                                    <button id="stepForward3DBtn" class="flow-ctrl-btn" title="Step to Next Instruction">
+                                        <span>Next</span>
+                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polygon points="5 4 15 12 5 20 5 4"></polygon>
+                                            <line x1="19" y1="5" x2="19" y2="19"></line>
+                                        </svg>
+                                    </button>
+                                    <button id="restart3DFlowBtn" class="flow-ctrl-btn" title="Restart from Entry Point">
+                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M1 4v6h6M23 20v-6h-6"></path>
+                                            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
+                                        </svg>
+                                        <span>Restart</span>
+                                    </button>
+                                    <div class="flow-speed-selector">
+                                        <label for="flow3DSpeedSelect">Speed:</label>
+                                        <select id="flow3DSpeedSelect" class="speed-select-sm">
+                                            <option value="1200">0.5x</option>
+                                            <option value="700" selected>1.0x</option>
+                                            <option value="350">2.0x</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="flow-controls-right">
+                                    <span id="flow3DStepBadge" class="flow-step-badge">Step 0 / 0</span>
+                                </div>
+                            </div>
+
+                            <!-- Live Control Flow Action Bar -->
+                            <div id="flow3DStatusBanner" class="flow-status-banner">
+                                <span class="flow-pulse-indicator"></span>
+                                <span id="flow3DStepMessage" class="flow-message-text">Click <strong>Play Flow</strong> to step through the program instructions in sequence.</span>
+                            </div>
+
+                            <!-- Clean, Structured Flowchart Canvas Stage (No abstract wireframe meshes) -->
+                            <div class="flowchart-workspace">
+                                <div class="flowchart-column">
+                                    <div class="flow-column-header">
+                                        <h4>Control Flow Graph (CFG)</h4>
+                                        <span class="flow-sub">Click any instruction block to highlight in editor</span>
+                                    </div>
+                                    <div id="flowchartNodesContainer" class="flowchart-nodes-list">
+                                        <!-- Clean Structured Flowchart Blocks Rendered Here -->
+                                        <div class="threed-loading">Analyzing program control flow...</div>
+                                    </div>
+                                </div>
+
+                                <div class="flowchart-column timeline-column">
+                                    <div class="flow-column-header">
+                                        <h4>Chronological Execution Steps</h4>
+                                        <span class="flow-sub">Instruction execution order</span>
+                                    </div>
+                                    <div id="flowTimelineContainer" class="flow-timeline-list">
+                                        <!-- Step by step chronological trace cards -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Floating Node Inspector HUD -->
+                            <div id="threedNodeHud" class="threed-node-hud" style="display: none;">
+                                <div class="hud-node-header">
+                                    <span id="hudNodeCategory" class="badge-sev badge-high">FUNCTION</span>
+                                    <button id="closeNodeHudBtn" class="close-btn" style="font-size: 16px;">&times;</button>
+                                </div>
+                                <h4 id="hudNodeLabel" class="hud-node-title">two_sum()</h4>
+                                <p id="hudNodeDesc" class="hud-node-desc">Function execution frame.</p>
+                                <div class="hud-node-snippet-box">
+                                    <code id="hudNodeSnippet">nums[i] + nums[j] == target</code>
+                                </div>
+                                <div class="hud-node-meta">
+                                    <div><span>Line:</span> <strong id="hudNodeLine">1</strong></div>
+                                    <div><span>Complexity:</span> <strong id="hudNodeComplexity">O(n)</strong></div>
+                                </div>
+                                <button id="hudJumpBtn" class="hud-btn-secondary" style="width: 100%; margin-top: 8px; font-size: 11px;">Focus Line in Editor</button>
+                            </div>
+
+                            <!-- Flow Legend -->
+                            <div class="threed-legend-bar">
+                                <div class="legend-item"><span class="legend-dot" style="background: #38bdf8;"></span> Entry</div>
+                                <div class="legend-item"><span class="legend-dot" style="background: #ec4899;"></span> Function Frame</div>
+                                <div class="legend-item"><span class="legend-dot" style="background: #10b981;"></span> Variables / Memory</div>
+                                <div class="legend-item"><span class="legend-dot" style="background: #f97316;"></span> Loops & Cycles</div>
+                                <div class="legend-item"><span class="legend-dot" style="background: #a855f7;"></span> Condition Decision</div>
+                                <div class="legend-item"><span class="legend-dot" style="background: #10b981;"></span> TRUE Pathway</div>
+                                <div class="legend-item"><span class="legend-dot" style="background: #ef4444;"></span> FALSE Pathway</div>
+                                <div class="legend-item"><span class="legend-dot" style="background: #eab308;"></span> Return / Exit</div>
+                                <div class="legend-hint">💡 Click any block to view code & jump to line in editor</div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+        </main>
+
+        <!-- History Drawer Overlay -->
+        <aside class="history-drawer" id="historyDrawer">
+            <div class="history-drawer-header">
+                <h3>Review History</h3>
+                <button id="clearAllHistoryBtn" class="btn-text-sm" style="color: #f43f5e; margin-left: auto; margin-right: 12px; cursor: pointer;">Clear All</button>
+                <button id="closeHistoryBtn" class="close-btn">&times;</button>
+            </div>
+            <div class="history-drawer-body" id="historyList">
+                <div class="history-loading">Loading saved reviews...</div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Solution Reveal Modal -->
+    <div class="modal-backdrop" id="solutionModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-badge">SOLVED FIX</div>
+                <h3 id="modalProblemTitle">Corrected Implementation</h3>
+                <button id="closeModalBtn" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-diff-section">
+                    <h4>Recommended Solution</h4>
+                    <pre id="modalSolutionCode" class="modal-code-pre"></pre>
+                </div>
+                <div class="modal-explanation-section">
+                    <div class="modal-exp-box">
+                        <strong>Why original approach failed:</strong>
+                        <p id="modalWhyFailed">--</p>
+                    </div>
+                    <div class="modal-exp-box">
+                        <strong>Why this fix works:</strong>
+                        <p id="modalWhyWorks">--</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="copySolutionBtn" class="hud-btn-secondary">Copy Solution</button>
+                <button id="insertSolutionBtn" class="hud-btn-primary">Apply to Editor</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Frontend Script -->
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
