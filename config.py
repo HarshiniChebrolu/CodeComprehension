@@ -102,7 +102,11 @@ class AppSettings(BaseSettings):
 
     # Request limits
     MAX_CODE_LENGTH: int = 50000
+    MAX_STDIN_LENGTH: int = 10000 # Cap for stdin input
     MAX_CONTENT_LENGTH: int = 1048576  # 1 MB
+
+    # Docker specific configurations
+    DOCKER_CONTAINER_NAME_PREFIX: str = "codecomp_sandbox_"
 
     # Rate Limiting & Proxy
     TRUSTED_PROXIES: int = 0
