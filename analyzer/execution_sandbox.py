@@ -17,7 +17,7 @@ import re
 import logging
 import uuid
 from config import Config
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 
 logger = logging.getLogger("codecomprehension.analyzer.execution_sandbox")
 
