@@ -27,7 +27,10 @@ pipeline {
                         string(credentialsId: 'OPENAI_API_KEY', variable: 'OPENAI_API_KEY')
                     ]) {
                         echo 'Validating container health and execution...'
-                        // Use bat and Windows-friendly syntax for running and sleeping
+                        // Clean up any stale container holding port 5000
+                        bat "docker rm -f code-reviewer-test || true"
+                        
+                        // Run container, wait, and stop
                         bat "docker run --rm -d -p 5000:5000 -e GEMINI_API_KEY=${GEMINI_API_KEY} -e OPENAI_API_KEY=${OPENAI_API_KEY} --name code-reviewer-test ${IMAGE_NAME}"
                         bat "timeout /t 5 /nobreak > nul"
                         bat "docker stop code-reviewer-test"
