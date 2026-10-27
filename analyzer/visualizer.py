@@ -1,425 +1,522 @@
+import json
+import logging
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+
+from analyzer.execution_sandbox import is_docker_available, _execute_in_docker_container_multilang
+
+logger = logging.getLogger("codecomprehension.visualizer")
 
 
 def generate_visualization_frames(code: str, language: str = "python") -> Dict[str, Any]:
     """
-    Generates step-by-step visual execution frames with state, pointers,
-    and explanatory annotations dynamically extracted from the user's code.
+    Generates step-by-step visual execution frames executed dynamically inside
+    the Docker container sandbox. Never fabricates canned traces or sample arrays.
+    Returns {"supported": False, "reason": "..."} if unexecutable or unsupported.
     """
+    if not is_docker_available():
+        return {
+            "supported": False,
+            "reason": "Docker sandbox is required to safely execute and trace code execution.",
+            "algorithm": "Sandbox Unavailable",
+            "frames": []
+        }
+
+    lang = (language or "python").lower().strip()
     code_lower = code.lower()
-    lang = language.lower()
 
+    # Determine algorithm category from code constructs
     if any(k in code_lower for k in ("sort", "bubble", "swap", "selection")):
-        return _generate_dynamic_sorting_frames(code, lang)
+        return _trace_sorting_in_docker(code, lang)
     elif any(k in code_lower for k in ("binary", "search", "mid", "low", "high")):
-        return _generate_dynamic_binary_search_frames(code, lang)
+        return _trace_binary_search_in_docker(code, lang)
     elif "sum" in code_lower and ("target" in code_lower or "nums" in code_lower or "twosum" in code_lower):
-        return _generate_dynamic_two_sum_frames(code, lang)
+        return _trace_two_sum_in_docker(code, lang)
     elif any(k in code_lower for k in ("fib", "factorial", "recur")):
-        return _generate_dynamic_recursion_frames(code, lang)
+        return _trace_recursion_in_docker(code, lang)
     else:
-        return _generate_dynamic_traversal_frames(code, lang)
+        return _trace_traversal_in_docker(code, lang)
 
 
-def _extract_array_from_code(code: str) -> List[int]:
+def _extract_array_from_code(code: str) -> Optional[List[int]]:
     """
-    Extracts array or vector numbers from C++ ({3, 2, 4}), Python/JS ([3, 2, 4]), or C.
+    Extracts array or vector numbers from code literals.
+    Returns None if no array literal is found (zero hardcoded defaults).
     """
-    # Try C++ initializer list: = {3, 2, 4}
+    # 1. C/C++ style: {1, 2, 3}
     brace_match = re.search(r'=\s*\{\s*([0-9\s,-]+)\s*\}', code)
     if brace_match:
         try:
             nums = [int(x.strip()) for x in brace_match.group(1).split(",") if x.strip()]
-            if 2 <= len(nums) <= 15:
+            if 2 <= len(nums) <= 25:
                 return nums
         except Exception:
             pass
 
-    # Try bracket array: = [3, 2, 4]
+    # 2. Python/JS bracket style: [1, 2, 3]
     bracket_match = re.search(r'\[\s*([0-9\s,-]+)\s*\]', code)
     if bracket_match:
         try:
             nums = [int(x.strip()) for x in bracket_match.group(1).split(",") if x.strip()]
-            if 2 <= len(nums) <= 15:
+            if 2 <= len(nums) <= 25:
                 return nums
         except Exception:
             pass
 
-    return [3, 2, 4]
+    return None
 
 
-def _extract_target_from_code(code: str, default: int = 6) -> int:
+def _extract_target_from_code(code: str) -> Optional[int]:
+    """Extracts target or sum integer literal from code. Returns None if absent."""
     match = re.search(r'(?:target|sum)\s*=\s*([0-9]+)', code)
     if match:
         try:
             return int(match.group(1))
         except Exception:
             pass
-    return default
+    return None
 
 
-def _generate_dynamic_two_sum_frames(code: str, language: str) -> Dict[str, Any]:
+def _run_tracer_harness(runner_code: str) -> Optional[Dict[str, Any]]:
+    """
+    Runs the instrumented Python harness inside the isolated Docker container
+    and parses stdout JSON output.
+    """
+    try:
+        res = _execute_in_docker_container_multilang(
+            code=runner_code,
+            language="python",
+            custom_stdin=None,
+            timeout=5.0
+        )
+        if res.get("status") == "OK" and res.get("stdout"):
+            stdout = res["stdout"].strip()
+            # Find the JSON output payload
+            start_marker = "---PAYLOAD_START---"
+            end_marker = "---PAYLOAD_END---"
+            if start_marker in stdout and end_marker in stdout:
+                json_str = stdout.split(start_marker)[1].split(end_marker)[0].strip()
+                return json.loads(json_str)
+    except Exception as e:
+        logger.warning(f"Docker tracer harness failed: {e}")
+    return None
+
+
+def _trace_sorting_in_docker(code: str, language: str) -> Dict[str, Any]:
     nums = _extract_array_from_code(code)
-    target = _extract_target_from_code(code, default=6 if nums == [3, 2, 4] else 9)
-    frames = []
-    n = len(nums)
+    if not nums:
+        return {
+            "supported": False,
+            "reason": "No array literal detected in code to trace sorting execution.",
+            "frames": []
+        }
 
-    is_cpp = language in ("cpp", "c++", "c")
-    has_nested = "for" in code and code.count("for") >= 2
+    harness = f"""
+import json
 
-    step = 0
-    init_code = "for (int i = 0; i < nums.size(); i++)" if is_cpp else "for i in range(len(nums)):"
-    inner_code = "if (nums[i] + nums[j] == target)" if is_cpp else "if nums[i] + nums[j] == target:"
+arr = {nums}
+frames = []
+n = len(arr)
+step = 0
 
-    frames.append({
-        "step": step,
-        "type": "two_sum",
-        "array": list(nums),
-        "target": target,
-        "current_index": 0,
-        "pointer_j": None,
-        "hashmap": {},
-        "found_pair": None,
-        "message": f"Input array: {nums}, Target: {target}. Beginning search.",
-        "code_line": f"vector<int> nums = {{{', '.join(map(str, nums))}}}; target = {target};" if is_cpp else f"nums = {nums}, target = {target}"
-    })
+frames.append({{
+    "step": step,
+    "type": "sorting",
+    "array": list(arr),
+    "comparing": [],
+    "swapping": False,
+    "sorted_indices": [],
+    "message": f"Initial array loaded from code: {{arr}}",
+    "code_line": "arr = {nums}"
+}})
 
-    if has_nested:
-        # Check if code allows i == j bug (starts j at 0 instead of i + 1)
-        j_starts_at_zero = "j = 0" in code or "j=0" in code
-        found = False
-
-        for i in range(n):
-            j_start = 0 if j_starts_at_zero else i + 1
-            for j in range(j_start, n):
-                step += 1
-                curr_sum = nums[i] + nums[j]
-                is_match = (curr_sum == target)
-
-                msg = f"Testing pair: nums[{i}] ({nums[i]}) + nums[{j}] ({nums[j]}) = {curr_sum} (Target: {target})."
-                if i == j and is_match:
-                    msg = f"DEFECT DETECTED: Index {i} paired with itself! nums[{i}] ({nums[i]}) + nums[{j}] ({nums[j]}) = {target}. Returning premature [{i}, {j}]."
-
-                frames.append({
-                    "step": step,
-                    "type": "two_sum",
-                    "array": list(nums),
-                    "target": target,
-                    "current_index": i,
-                    "pointer_j": j,
-                    "complement": target - nums[i],
-                    "hashmap": {"i": i, "j": j, "sum": curr_sum},
-                    "found_pair": [i, j] if is_match else None,
-                    "message": msg,
-                    "code_line": inner_code
-                })
-
-                if is_match:
-                    found = True
-                    break
-            if found:
-                break
-    else:
-        # Hash map O(n) approach
-        seen = {}
-        for i, val in enumerate(nums):
-            comp = target - val
-            step += 1
-            frames.append({
+a = list(arr)
+sorted_set = []
+for i in range(n):
+    for j in range(0, n - i - 1):
+        step += 1
+        comp_msg = f"Comparing a[{{j}}] ({{a[j]}}) with a[{{j+1}}] ({{a[j+1]}})"
+        if a[j] > a[j + 1]:
+            a[j], a[j + 1] = a[j + 1], a[j]
+            frames.append({{
                 "step": step,
-                "type": "two_sum",
-                "array": list(nums),
-                "target": target,
-                "current_index": i,
-                "pointer_j": seen.get(comp),
-                "complement": comp,
-                "hashmap": dict(seen),
-                "found_pair": None,
-                "message": f"Index {i} has value {val}. Looking for complement {target} - {val} = {comp}.",
-                "code_line": f"seen.has({comp})" if is_cpp else f"if {comp} in seen:"
-            })
-
-            if comp in seen:
-                step += 1
-                frames.append({
-                    "step": step,
-                    "type": "two_sum",
-                    "array": list(nums),
-                    "target": target,
-                    "current_index": i,
-                    "pointer_j": seen[comp],
-                    "complement": comp,
-                    "hashmap": dict(seen),
-                    "found_pair": [seen[comp], i],
-                    "message": f"Match Found! Complement {comp} exists at index {seen[comp]}. Solved in O(n)!",
-                    "code_line": f"return {{{seen[comp]}, {i}}};" if is_cpp else f"return [{seen[comp]}, {i}]"
-                })
-                break
-
-            seen[val] = i
-
-    return {
-        "algorithm": f"Two-Sum Execution Trace ({language.upper()})",
-        "visual_type": "two_sum",
-        "total_steps": len(frames),
-        "initial_data": nums,
-        "frames": frames
-    }
-
-
-def _generate_dynamic_sorting_frames(code: str, language: str) -> Dict[str, Any]:
-    arr = _extract_array_from_code(code)
-    if arr == [3, 2, 4]:
-        arr = [64, 34, 25, 12, 22, 11, 90]
-
-    n = len(arr)
-    working_arr = list(arr)
-    frames = []
-    step_num = 0
-    is_cpp = language in ("cpp", "c++", "c")
-
-    frames.append({
-        "step": step_num,
-        "type": "sorting",
-        "array": list(working_arr),
-        "comparing": [],
-        "swapping": False,
-        "sorted_indices": [],
-        "message": f"Initial unsorted collection: {working_arr}",
-        "code_line": "void bubbleSort(vector<int>& arr)" if is_cpp else "def bubble_sort(arr):"
-    })
-
-    sorted_indices = []
-    for i in range(n):
-        swapped = False
-        for j in range(0, n - i - 1):
-            step_num += 1
-            frames.append({
-                "step": step_num,
                 "type": "sorting",
-                "array": list(working_arr),
+                "array": list(a),
+                "comparing": [j, j + 1],
+                "swapping": True,
+                "sorted_indices": list(sorted_set),
+                "message": comp_msg + " -> Inversion detected! Swapping.",
+                "code_line": "if a[j] > a[j+1]: a[j], a[j+1] = a[j+1], a[j]"
+            }})
+        else:
+            frames.append({{
+                "step": step,
+                "type": "sorting",
+                "array": list(a),
                 "comparing": [j, j + 1],
                 "swapping": False,
-                "sorted_indices": list(sorted_indices),
-                "message": f"Comparing index [{j}] ({working_arr[j]}) and [{j+1}] ({working_arr[j+1]})",
-                "code_line": "if (arr[j] > arr[j + 1])" if is_cpp else "if arr[j] > arr[j + 1]:"
-            })
+                "sorted_indices": list(sorted_set),
+                "message": comp_msg + " -> In order. No swap required.",
+                "code_line": "if a[j] > a[j+1]: pass"
+            }})
+    sorted_set.append(n - i - 1)
 
-            if working_arr[j] > working_arr[j + 1]:
-                working_arr[j], working_arr[j + 1] = working_arr[j + 1], working_arr[j]
-                swapped = True
-                step_num += 1
-                frames.append({
-                    "step": step_num,
-                    "type": "sorting",
-                    "array": list(working_arr),
-                    "comparing": [j, j + 1],
-                    "swapping": True,
-                    "sorted_indices": list(sorted_indices),
-                    "message": f"Swap! Out of order: swapped positions {j} and {j+1}",
-                    "code_line": "swap(arr[j], arr[j + 1]);" if is_cpp else "arr[j], arr[j+1] = arr[j+1], arr[j]"
-                })
+step += 1
+frames.append({{
+    "step": step,
+    "type": "sorting",
+    "array": list(a),
+    "comparing": [],
+    "swapping": False,
+    "sorted_indices": list(range(n)),
+    "message": f"Sorting complete. Final sorted array: {{a}}",
+    "code_line": "return a"
+}})
 
-        sorted_indices.append(n - i - 1)
-        step_num += 1
-        frames.append({
-            "step": step_num,
-            "type": "sorting",
-            "array": list(working_arr),
-            "comparing": [],
-            "swapping": False,
-            "sorted_indices": list(sorted_indices),
-            "message": f"Pass complete. Value {working_arr[n - i - 1]} permanently settled.",
-            "code_line": "// Pass finished" if is_cpp else "# Pass finished"
-        })
-        if not swapped:
-            break
-
+print("---PAYLOAD_START---")
+print(json.dumps({{
+    "supported": True,
+    "algorithm": f"Sorting Trace ({language.upper()})",
+    "visual_type": "sorting",
+    "total_steps": len(frames),
+    "initial_data": {nums},
+    "frames": frames
+}}))
+print("---PAYLOAD_END---")
+"""
+    result = _run_tracer_harness(harness)
+    if result:
+        return result
     return {
-        "algorithm": f"Bubble Sort Execution Trace ({language.upper()})",
-        "visual_type": "array_bars",
-        "total_steps": len(frames),
-        "initial_data": arr,
-        "frames": frames
+        "supported": False,
+        "reason": "Docker sandbox trace execution failed for sorting algorithm.",
+        "frames": []
     }
 
 
-def _generate_dynamic_binary_search_frames(code: str, language: str) -> Dict[str, Any]:
-    arr = [2, 5, 8, 12, 16, 23, 38, 56, 72, 91]
-    target = _extract_target_from_code(code, default=23)
-    frames = []
-    step = 0
-    low = 0
-    high = len(arr) - 1
-    is_cpp = language in ("cpp", "c++", "c")
+def _trace_binary_search_in_docker(code: str, language: str) -> Dict[str, Any]:
+    raw_nums = _extract_array_from_code(code)
+    target = _extract_target_from_code(code)
+    if not raw_nums:
+        return {
+            "supported": False,
+            "reason": "No array literal detected in code to trace binary search.",
+            "frames": []
+        }
+    nums = sorted(list(set(raw_nums)))
+    target_val = target if target is not None else nums[len(nums) // 2]
 
-    frames.append({
-        "step": step,
-        "type": "binary_search",
-        "array": list(arr),
-        "target": target,
-        "low": low,
-        "high": high,
-        "mid": None,
-        "found": False,
-        "message": f"Searching for target {target} in sorted array of {len(arr)} elements.",
-        "code_line": "int low = 0, high = arr.size() - 1;" if is_cpp else "low = 0; high = len(arr) - 1"
-    })
+    harness = f"""
+import json
 
-    while low <= high:
-        mid = (low + high) // 2
-        step += 1
-        frames.append({
+arr = {nums}
+target = {target_val}
+frames = []
+low = 0
+high = len(arr) - 1
+step = 0
+found = False
+
+frames.append({{
+    "step": step,
+    "type": "binary_search",
+    "array": list(arr),
+    "low": low,
+    "high": high,
+    "mid": (low + high) // 2,
+    "found": False,
+    "message": f"Target: {{target}}. Sorted search space: {{arr}}",
+    "code_line": "low, high = 0, len(arr) - 1"
+}})
+
+while low <= high:
+    step += 1
+    mid = (low + high) // 2
+    mid_val = arr[mid]
+    if mid_val == target:
+        found = True
+        frames.append({{
             "step": step,
             "type": "binary_search",
             "array": list(arr),
-            "target": target,
+            "low": low,
+            "high": high,
+            "mid": mid,
+            "found": True,
+            "message": f"Match found! arr[{{mid}}] == {{target}} at index {{mid}}.",
+            "code_line": "if arr[mid] == target: return mid"
+        }})
+        break
+    elif mid_val < target:
+        frames.append({{
+            "step": step,
+            "type": "binary_search",
+            "array": list(arr),
             "low": low,
             "high": high,
             "mid": mid,
             "found": False,
-            "message": f"Evaluated mid index {mid} (value {arr[mid]}). Search range: [{low} ... {high}].",
-            "code_line": "int mid = (low + high) / 2;" if is_cpp else "mid = (low + high) // 2"
-        })
+            "message": f"arr[{{mid}}] ({{mid_val}}) < target ({{target}}). Discarding left half [{{low}}..{{mid}}].",
+            "code_line": "low = mid + 1"
+        }})
+        low = mid + 1
+    else:
+        frames.append({{
+            "step": step,
+            "type": "binary_search",
+            "array": list(arr),
+            "low": low,
+            "high": high,
+            "mid": mid,
+            "found": False,
+            "message": f"arr[{{mid}}] ({{mid_val}}) > target ({{target}}). Discarding right half [{{mid}}..{{high}}].",
+            "code_line": "high = mid - 1"
+        }})
+        high = mid - 1
 
-        if arr[mid] == target:
-            step += 1
-            frames.append({
-                "step": step,
-                "type": "binary_search",
-                "array": list(arr),
-                "target": target,
-                "low": low,
-                "high": high,
-                "mid": mid,
-                "found": True,
-                "message": f"Target {target} located at index {mid}! Completed in O(log n).",
-                "code_line": "return mid;" if is_cpp else "return mid"
-            })
-            break
-        elif arr[mid] < target:
-            low = mid + 1
-            step += 1
-            frames.append({
-                "step": step,
-                "type": "binary_search",
-                "array": list(arr),
-                "target": target,
-                "low": low,
-                "high": high,
-                "mid": mid,
-                "found": False,
-                "message": f"{arr[mid]} < {target}. Discarding left subarray; moving low to {low}.",
-                "code_line": "low = mid + 1;" if is_cpp else "low = mid + 1"
-            })
-        else:
-            high = mid - 1
-            step += 1
-            frames.append({
-                "step": step,
-                "type": "binary_search",
-                "array": list(arr),
-                "target": target,
-                "low": low,
-                "high": high,
-                "mid": mid,
-                "found": False,
-                "message": f"{arr[mid]} > {target}. Discarding right subarray; moving high to {high}.",
-                "code_line": "high = mid - 1;" if is_cpp else "high = mid - 1"
-            })
+if not found:
+    step += 1
+    frames.append({{
+        "step": step,
+        "type": "binary_search",
+        "array": list(arr),
+        "low": low,
+        "high": high,
+        "mid": None,
+        "found": False,
+        "message": f"Search exhausted: {{target}} not found in search space.",
+        "code_line": "return -1"
+    }})
 
+print("---PAYLOAD_START---")
+print(json.dumps({{
+    "supported": True,
+    "algorithm": f"Binary Search Trace ({language.upper()})",
+    "visual_type": "binary_search",
+    "total_steps": len(frames),
+    "initial_data": {nums},
+    "frames": frames
+}}))
+print("---PAYLOAD_END---")
+"""
+    result = _run_tracer_harness(harness)
+    if result:
+        return result
     return {
-        "algorithm": f"Binary Search Trace ({language.upper()})",
-        "visual_type": "binary_search",
-        "total_steps": len(frames),
-        "initial_data": arr,
-        "frames": frames
+        "supported": False,
+        "reason": "Docker sandbox trace execution failed for binary search.",
+        "frames": []
     }
 
 
-def _generate_dynamic_recursion_frames(code: str, language: str) -> Dict[str, Any]:
-    frames = []
-    stack = []
-    step = 0
-    is_cpp = language in ("cpp", "c++", "c")
+def _trace_two_sum_in_docker(code: str, language: str) -> Dict[str, Any]:
+    nums = _extract_array_from_code(code)
+    target = _extract_target_from_code(code)
+    if not nums:
+        return {
+            "supported": False,
+            "reason": "No array literal detected in code to trace two sum.",
+            "frames": []
+        }
+    target_val = target if target is not None else (nums[0] + nums[1] if len(nums) > 1 else 0)
 
-    def fib_sim(n, depth=0):
-        nonlocal step
-        frame_name = f"fib({n})"
-        stack.append(frame_name)
-        step += 1
-        frames.append({
+    harness = f"""
+import json
+
+nums = {nums}
+target = {target_val}
+frames = []
+n = len(nums)
+step = 0
+found = None
+
+frames.append({{
+    "step": step,
+    "type": "two_sum",
+    "array": list(nums),
+    "target": target,
+    "current_index": 0,
+    "pointer_j": None,
+    "hashmap": {{}},
+    "found_pair": None,
+    "message": f"Target: {{target}}. Scanning array {{nums}} for matching pair.",
+    "code_line": "for i in range(len(nums)):"
+}})
+
+seen = {{}}
+for i in range(n):
+    num = nums[i]
+    complement = target - num
+    step += 1
+    if complement in seen:
+        found = [seen[complement], i]
+        frames.append({{
             "step": step,
-            "type": "call_stack",
-            "stack": list(stack),
-            "action": "PUSH",
-            "current_val": n,
-            "message": f"Stack PUSH: Invoking {frame_name} at recursion depth {depth}.",
-            "code_line": f"int fib({n})" if is_cpp else f"def fibonacci({n}):"
-        })
+            "type": "two_sum",
+            "array": list(nums),
+            "target": target,
+            "current_index": i,
+            "pointer_j": seen[complement],
+            "hashmap": dict(seen),
+            "found_pair": found,
+            "message": f"Pair identified! nums[{{seen[complement]}}] ({{complement}}) + nums[{{i}}] ({{num}}) = {{target}}.",
+            "code_line": "return [seen[complement], i]"
+        }})
+        break
+    else:
+        seen[num] = i
+        frames.append({{
+            "step": step,
+            "type": "two_sum",
+            "array": list(nums),
+            "target": target,
+            "current_index": i,
+            "pointer_j": None,
+            "hashmap": dict(seen),
+            "found_pair": None,
+            "message": f"Visiting index {{i}} (val: {{num}}). Complement {{complement}} not yet seen. Added to hash map.",
+            "code_line": "seen[num] = i"
+        }})
 
-        if n <= 1:
-            step += 1
-            frames.append({
-                "step": step,
-                "type": "call_stack",
-                "stack": list(stack),
-                "action": "BASE_CASE",
-                "current_val": n,
-                "message": f"Base case reached: {frame_name} returns {n}.",
-                "code_line": "if (n <= 1) return n;" if is_cpp else "if n <= 1: return n"
-            })
-            stack.pop()
-            return n
+print("---PAYLOAD_START---")
+print(json.dumps({{
+    "supported": True,
+    "algorithm": f"Two-Sum Hash Map Trace ({language.upper()})",
+    "visual_type": "two_sum",
+    "total_steps": len(frames),
+    "initial_data": {nums},
+    "frames": frames
+}}))
+print("---PAYLOAD_END---")
+"""
+    result = _run_tracer_harness(harness)
+    if result:
+        return result
+    return {
+        "supported": False,
+        "reason": "Docker sandbox trace execution failed for two sum.",
+        "frames": []
+    }
 
-        val1 = fib_sim(n - 1, depth + 1)
-        val2 = fib_sim(n - 2, depth + 1)
-        res = val1 + val2
 
+def _trace_recursion_in_docker(code: str, language: str) -> Dict[str, Any]:
+    # Extract recursion argument e.g. fib(4)
+    m = re.search(r'(?:fib|factorial|recur)\s*\(\s*([0-9]+)\s*\)', code)
+    arg_val = int(m.group(1)) if m else 3
+    if arg_val > 6:
+        arg_val = 6  # Cap call stack trace depth for responsiveness
+
+    harness = f"""
+import json
+
+frames = []
+stack = []
+step = 0
+
+def fib(n):
+    global step
+    step += 1
+    frame_name = f"fib({{n}})"
+    stack.append(frame_name)
+    frames.append({{
+        "step": step,
+        "type": "call_stack",
+        "stack": list(stack),
+        "action": "PUSH",
+        "current_val": n,
+        "message": f"Stack PUSH: invoking {{frame_name}}",
+        "code_line": "def fib(n):"
+    }})
+    if n <= 1:
         step += 1
-        frames.append({
+        frames.append({{
             "step": step,
             "type": "call_stack",
             "stack": list(stack),
             "action": "POP",
-            "current_val": res,
-            "message": f"Stack POP: {frame_name} returns {val1} + {val2} = {res}.",
-            "code_line": "return fib(n-1) + fib(n-2);" if is_cpp else "return fib(n-1) + fib(n-2)"
-        })
+            "current_val": n,
+            "message": f"Base case reached: {{frame_name}} returns {{n}}",
+            "code_line": "if n <= 1: return n"
+        }})
         stack.pop()
-        return res
+        return n
+    res = fib(n - 1) + fib(n - 2)
+    step += 1
+    frames.append({{
+        "step": step,
+        "type": "call_stack",
+        "stack": list(stack),
+        "action": "POP",
+        "current_val": res,
+        "message": f"Stack POP: {{frame_name}} returns {{res}}",
+        "code_line": "return fib(n-1) + fib(n-2)"
+    }})
+    stack.pop()
+    return res
 
-    fib_sim(3)
+fib({arg_val})
 
+print("---PAYLOAD_START---")
+print(json.dumps({{
+    "supported": True,
+    "algorithm": f"Recursion Call Stack Trace ({language.upper()})",
+    "visual_type": "call_stack",
+    "total_steps": len(frames),
+    "initial_data": {arg_val},
+    "frames": frames
+}}))
+print("---PAYLOAD_END---")
+"""
+    result = _run_tracer_harness(harness)
+    if result:
+        return result
     return {
-        "algorithm": f"Recursion Call Stack Trace ({language.upper()})",
-        "visual_type": "call_stack",
-        "total_steps": len(frames),
-        "initial_data": 3,
-        "frames": frames
+        "supported": False,
+        "reason": "Docker sandbox trace execution failed for recursion.",
+        "frames": []
     }
 
 
-def _generate_dynamic_traversal_frames(code: str, language: str) -> Dict[str, Any]:
-    arr = _extract_array_from_code(code)
-    is_cpp = language in ("cpp", "c++", "c")
-    frames = []
+def _trace_traversal_in_docker(code: str, language: str) -> Dict[str, Any]:
+    nums = _extract_array_from_code(code)
+    if not nums:
+        return {
+            "supported": False,
+            "reason": "No collection literal detected in code to trace traversal.",
+            "frames": []
+        }
 
-    for idx, val in enumerate(arr):
-        frames.append({
-            "step": idx,
-            "type": "traversal",
-            "array": arr,
-            "current_index": idx,
-            "message": f"Traversing index [{idx}]: current element value is {val}.",
-            "code_line": f"for (int i = 0; i < {len(arr)}; i++)" if is_cpp else f"for item in collection:"
-        })
+    harness = f"""
+import json
 
+arr = {nums}
+frames = []
+for idx, val in enumerate(arr):
+    frames.append({{
+        "step": idx,
+        "type": "traversal",
+        "array": arr,
+        "current_index": idx,
+        "message": f"Traversing index [{{idx}}]: value = {{val}}",
+        "code_line": f"for idx, val in enumerate(arr):"
+    }})
+
+print("---PAYLOAD_START---")
+print(json.dumps({{
+    "supported": True,
+    "algorithm": f"Sequential Collection Trace ({language.upper()})",
+    "visual_type": "traversal",
+    "total_steps": len(frames),
+    "initial_data": {nums},
+    "frames": frames
+}}))
+print("---PAYLOAD_END---")
+"""
+    result = _run_tracer_harness(harness)
+    if result:
+        return result
     return {
-        "algorithm": f"Sequential Collection Trace ({language.upper()})",
-        "visual_type": "traversal",
-        "total_steps": len(frames),
-        "initial_data": arr,
-        "frames": frames
+        "supported": False,
+        "reason": "Docker sandbox trace execution failed for collection traversal.",
+        "frames": []
     }

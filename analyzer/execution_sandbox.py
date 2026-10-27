@@ -79,137 +79,82 @@ def check_code_safety(code: str, language: str = "python") -> Tuple[bool, str]:
     return True, ""
 
 
-def analyze_sandbox_topics(code: str, language: str, exec_result: Dict[str, Any]) -> Dict[str, Any]:
+def extract_execution_telemetry(code: str, language: str, exec_result: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Extracts structured topics, computer science concepts, and execution metrics
-    involved in the sandbox run.
+    Extracts real execution telemetry and metrics from the sandbox run.
+    Zero fabricated topics or canned badges.
     """
     lang = language.lower().strip()
-    code_lower = code.lower()
-    topics = []
-
-    # 1. Control Flow Topics
-    if ("for " in code and code.count("for ") >= 2) or len(re.findall(r'\bfor\s*\(', code)) >= 2:
-        topics.append({
-            "category": "Control Flow",
-            "name": "Nested Iteration Loops",
-            "badge": "O(n²)",
-            "icon": "🔁",
-            "color": "#f97316",
-            "summary": "Dual nested loops iterate through elements pairwise.",
-            "details": "Executes quadratic iterations (n × n operations). Critical review checkpoint for algorithmic optimization."
-        })
-    elif "for " in code or "for(" in code:
-        topics.append({
-            "category": "Control Flow",
-            "name": "Linear Iteration Loop",
-            "badge": "O(n)",
-            "icon": "➡️",
+    status = exec_result.get("status", "UNKNOWN")
+    exit_code = exec_result.get("exit_code", -1)
+    duration_ms = exec_result.get("duration_ms", 0)
+    backend = getattr(Config, "EXECUTION_BACKEND", "docker")
+    mem_limit = Config.SUPPORTED_LANGUAGES.get(lang, {}).get("memory_limit", "128m")
+    
+    # Real telemetry breakdown based on actual execution output
+    metrics = []
+    
+    # 1. Execution status
+    metrics.append({
+        "category": "Process Status",
+        "name": f"Exit Code {exit_code}",
+        "badge": status,
+        "icon": "⚡" if status in ("OK", "SUCCESS") else "⚠️",
+        "color": "#10b981" if status in ("OK", "SUCCESS") else "#ef4444",
+        "summary": f"Process completed with status {status}.",
+        "details": f"Duration: {duration_ms}ms. Exit code: {exit_code}."
+    })
+    
+    # 2. Isolation / Environment
+    if backend == "docker":
+        metrics.append({
+            "category": "Isolation Architecture",
+            "name": "Docker Container Sandbox",
+            "badge": "cgroups/tmpfs",
+            "icon": "🐳",
             "color": "#38bdf8",
-            "summary": "Single loop traversing elements in linear sequence.",
-            "details": "Processes each item once from start to finish with bounded linear runtime."
+            "summary": "Isolated container with dropped capabilities and no network access.",
+            "details": f"Memory limit: {mem_limit}. Workdir: ephemeral tmpfs /work. Pids limit: 32."
         })
-
-    if "while " in code or "while(" in code:
-        topics.append({
-            "category": "Control Flow",
-            "name": "Conditional While Iteration",
-            "badge": "Dynamic Loop",
-            "icon": "🔄",
-            "color": "#ec4899",
-            "summary": "Loop bounded by dynamic boolean expression.",
-            "details": "Guards against termination condition. Verified no infinite loop occurred within the sandbox timeout."
-        })
-
-    if "if " in code or "if(" in code or "switch" in code:
-        topics.append({
-            "category": "Control Flow",
-            "name": "Decision Branching",
-            "badge": "Conditional",
-            "icon": "🔀",
-            "color": "#a855f7",
-            "summary": "Branch forks dividing execution into separate logical pathways.",
-            "details": "Evaluates boolean predicates to select alternate code blocks."
-        })
-
-    # 2. Data Structures & Memory Topics
-    if any(k in code_lower for k in ("vector", "list", "[]", "array", "arr")):
-        topics.append({
-            "category": "Memory Architecture",
-            "name": "Indexed Contiguous Memory",
-            "badge": "Contiguous Array",
-            "icon": "📦",
-            "color": "#10b981",
-            "summary": "Zero-indexed sequential memory buffer.",
-            "details": "Provides O(1) random access via memory address offsets. Subject to out-of-bounds guards."
-        })
-
-    if any(k in code_lower for k in ("map", "dict", "hashmap", "unordered_map", "set")):
-        topics.append({
-            "category": "Data Structures",
-            "name": "Hash Table / Associative Array",
-            "badge": "O(1) Lookup",
-            "icon": "🔑",
+    else:
+        metrics.append({
+            "category": "Isolation Architecture",
+            "name": "Local Subprocess",
+            "badge": "Subprocess",
+            "icon": "💻",
             "color": "#eab308",
-            "summary": "Key-value hash association with amortized O(1) retrieval.",
-            "details": "Maps unique keys to values or tracks visited elements in constant average time."
+            "summary": "Executed via local subprocess sandbox with timeout enforcement.",
+            "details": f"Timeout: {Config.EXECUTION_TIMEOUT}s."
         })
-
-    # 3. Algorithmic Patterns
-    if any(k in code_lower for k in ("twosum", "two_sum", "target", "complement")):
-        topics.append({
-            "category": "Algorithmic Pattern",
-            "name": "Pair Target Sum Matching",
-            "badge": "Two-Sum Pattern",
-            "icon": "🎯",
-            "color": "#06b6d4",
-            "summary": "Identifies pair of elements whose sum satisfies target value.",
-            "details": "Can be implemented via brute-force O(n²) or optimized single-pass hash map O(n)."
-        })
-    elif any(k in code_lower for k in ("sort", "bubble", "swap")):
-        topics.append({
-            "category": "Algorithmic Pattern",
-            "name": "In-Place Permutation & Sorting",
-            "badge": "Ordering",
-            "icon": "📶",
-            "color": "#f43f5e",
-            "summary": "Sequentially reorders collection items using comparison predicates.",
-            "details": "Performs in-place index exchanges to establish monotonic sorting order."
-        })
-    elif any(k in code_lower for k in ("binary", "search", "mid", "low", "high")):
-        topics.append({
-            "category": "Algorithmic Pattern",
-            "name": "Binary Interval Halving",
-            "badge": "O(log n)",
-            "icon": "✂️",
-            "color": "#14b8a6",
-            "summary": "Logarithmic search through sorted collection by halving search space.",
-            "details": "Calculates midpoint and discards half the candidate set each cycle."
-        })
-
-    # 4. Sandbox System Security Topics (Always verified!)
-    topics.append({
-        "category": "Sandbox System",
-        "name": "Isolated Subprocess Jail",
-        "badge": "Verified Safe",
-        "icon": "🛡️",
-        "color": "#10b981",
-        "summary": "Execution confined within isolated subprocess environment.",
-        "details": f"Enforced strict {Config.EXECUTION_TIMEOUT}s timeout and restricted OS syscall safety boundary."
+        
+    # 3. Output stream telemetry
+    stdout_len = len(exec_result.get("stdout", "") or "")
+    stderr_len = len(exec_result.get("stderr", "") or "")
+    metrics.append({
+        "category": "Stream Telemetry",
+        "name": "I/O Buffers",
+        "badge": f"{stdout_len}B out / {stderr_len}B err",
+        "icon": "📊",
+        "color": "#a855f7",
+        "summary": f"Standard streams captured {stdout_len} bytes stdout, {stderr_len} bytes stderr.",
+        "details": "Output truncated: " + ("Yes" if exec_result.get("truncated") else "No")
     })
 
     return {
-        "topics_involved": topics,
+        "topics_involved": metrics,
         "runtime_telemetry": {
-            "exit_code": exec_result.get("exit_code", -1),
-            "status": exec_result.get("status", "UNKNOWN"),
-            "execution_time_ms": exec_result.get("duration_ms", 0),
-            "memory_tier": "Heap Stack Allocation (< 128MB container bound)", # Updated for Docker limits
-            "isolation_mode": "Hardened Subprocess Sandbox",
-            "safety_audit": "PASSED (No forbidden syscalls, No socket/file leaks)",
-            "language": language
+            "exit_code": exit_code,
+            "status": status,
+            "execution_time_ms": duration_ms,
+            "memory_tier": f"Container Bound: {mem_limit}",
+            "isolation_mode": "Docker Container Sandbox (cgroup/tmpfs)" if backend == "docker" else "Local Process",
+            "safety_audit": "PASSED (Containerized Sandbox)" if status in ("OK", "SUCCESS", "RUNTIME_ERROR", "COMPILE_ERROR", "TIMEOUT") else f"FAILED ({status})",
+            "language": lang
         }
     }
+
+
+analyze_sandbox_topics = extract_execution_telemetry
 
 
 def is_docker_available() -> bool:

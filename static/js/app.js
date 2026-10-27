@@ -712,7 +712,32 @@ console.log("Indices:", twoSum(nums, target));
         setTimeout(performReview, 50);
     }
 
+    async function loadLanguages() {
+        try {
+            const resp = await fetch("/api/v1/languages");
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (data.success && data.languages && languageSelect) {
+                const currentVal = languageSelect.value || state.language || "python";
+                languageSelect.innerHTML = "";
+                Object.entries(data.languages).forEach(([langKey, info]) => {
+                    const opt = document.createElement("option");
+                    opt.value = langKey;
+                    const readyIndicator = info.runnable ? "✓ Ready" : "Static";
+                    const displayName = info.display_name || langKey.toUpperCase();
+                    opt.textContent = `${displayName} (${readyIndicator})`;
+                    if (langKey === currentVal) opt.selected = true;
+                    languageSelect.appendChild(opt);
+                });
+            }
+        } catch (e) {
+            console.warn("Could not fetch dynamic language registry:", e);
+        }
+    }
+    loadLanguages();
+
     languageSelect.addEventListener("change", (e) => {
+        pauseVisualization();
         state.language = e.target.value;
         const exts = { python: ".py", c: ".c", cpp: ".cpp", java: ".java", javascript: ".js" };
         activeFileName.textContent = (state.language === "java" ? "Main" : "main") + (exts[state.language] || ".txt");
@@ -805,12 +830,20 @@ console.log("Indices:", twoSum(nums, target));
 
     reviewBtn.addEventListener("click", performReview);
 
+    let currentReviewAbortController = null;
+
     async function performReview() {
         const code = codeEditor.value;
         if (!code.trim()) {
             alert("Please enter code before running review.");
             return;
         }
+
+        if (currentReviewAbortController) {
+            currentReviewAbortController.abort();
+        }
+        currentReviewAbortController = new AbortController();
+        const signal = currentReviewAbortController.signal;
 
         // UI Loading State
         reviewBtn.disabled = true;
@@ -826,13 +859,15 @@ console.log("Indices:", twoSum(nums, target));
                 body: JSON.stringify({
                     code: code,
                     language: state.language
-                })
+                }),
+                signal: signal
             });
 
             const data = await resp.json();
 
             if (!resp.ok || !data.success) {
-                alert("Review failed: " + (data.error || "Unknown server error"));
+                const errMsg = (data.error && data.error.message) || data.message || "Unknown server error";
+                alert("Review failed: " + errMsg);
                 return;
             }
 
@@ -863,6 +898,10 @@ console.log("Indices:", twoSum(nums, target));
             editorStatusPill.className = "status-pill status-ready";
 
         } catch (err) {
+            if (err.name === "AbortError") {
+                // Superseded by newer review request; ignore cleanly
+                return;
+            }
             console.error("Review request error:", err);
             alert("Network error communicating with review engine.");
         } finally {
@@ -1336,8 +1375,21 @@ console.log("Indices:", twoSum(nums, target));
     // ==========================================================================
 
     function initVisualizer(visData) {
-        if (!visData || !visData.frames || !visData.frames.length) {
-            visStage.innerHTML = `<div class="vis-empty">Visualizer ready. Review code to generate interactive steps.</div>`;
+        if (state.visualizer.timer) {
+            clearInterval(state.visualizer.timer);
+            state.visualizer.timer = null;
+        }
+        if (!visData || visData.supported === false || !visData.frames || !visData.frames.length) {
+            const reason = (visData && visData.reason) || "Visualizer ready. Review code to generate interactive steps.";
+            visStage.innerHTML = `<div class="vis-empty">${escapeHtml(reason)}</div>`;
+            state.visualizer.frames = [];
+            state.visualizer.totalSteps = 0;
+            state.visualizer.currentStep = 0;
+            state.visualizer.isPlaying = false;
+            updatePlayPauseUI();
+            visAlgoTitle.textContent = (visData && visData.algorithm) || "Algorithm Visualization";
+            visTotalSteps.textContent = "0";
+            visCurrentStep.textContent = "0";
             return;
         }
 
@@ -1345,7 +1397,6 @@ console.log("Indices:", twoSum(nums, target));
         state.visualizer.totalSteps = visData.frames.length;
         state.visualizer.currentStep = 0;
         state.visualizer.isPlaying = false;
-        clearInterval(state.visualizer.timer);
         updatePlayPauseUI();
 
         visAlgoTitle.textContent = visData.algorithm || "Algorithm Visualization";
@@ -1495,6 +1546,10 @@ console.log("Indices:", twoSum(nums, target));
     });
 
     function playVisualization() {
+        if (state.visualizer.timer) {
+            clearInterval(state.visualizer.timer);
+            state.visualizer.timer = null;
+        }
         if (state.visualizer.currentStep >= state.visualizer.totalSteps - 1) {
             state.visualizer.currentStep = 0;
         }
@@ -1513,7 +1568,10 @@ console.log("Indices:", twoSum(nums, target));
 
     function pauseVisualization() {
         state.visualizer.isPlaying = false;
-        clearInterval(state.visualizer.timer);
+        if (state.visualizer.timer) {
+            clearInterval(state.visualizer.timer);
+            state.visualizer.timer = null;
+        }
         updatePlayPauseUI();
     }
 

@@ -1,6 +1,12 @@
 import ast
+import json
+import logging
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+
+from analyzer.execution_sandbox import is_docker_available, _execute_in_docker_container_multilang
+
+logger = logging.getLogger("codecomprehension.test_generator")
 
 
 def generate_test_cases(code: str, language: str = "python") -> Dict[str, Any]:
@@ -365,13 +371,112 @@ def generate_test_cases(code: str, language: str = "python") -> Dict[str, Any]:
             }
         }
 
+    # Verify test cases dynamically in sandbox
+    verified_test_cases = _verify_tests_in_sandbox(code, language, func_name, test_cases)
+
     return {
         "function_name": func_name,
         "parameters": params,
-        "test_cases": test_cases,
+        "test_cases": verified_test_cases,
         "case_scenarios": case_scenarios,
-        "total_generated": len(test_cases)
+        "total_generated": len(verified_test_cases)
     }
+
+
+def _verify_tests_in_sandbox(
+    code: str,
+    language: str,
+    func_name: Optional[str],
+    test_cases: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """
+    Executes generated test cases inside Docker sandbox and tags each case with
+    PASS, FAIL, RUNTIME_ERROR, TIMEOUT, or UNVERIFIED.
+    """
+    lang = language.lower().strip()
+    if lang != "python" or not func_name or not is_docker_available():
+        reason = "Execution verification skipped (unsupported language or Docker sandbox inactive)."
+        for tc in test_cases:
+            tc["status"] = "UNVERIFIED"
+            tc["actual_output"] = None
+            tc["verification_note"] = reason
+        return test_cases
+
+    # Build batch runner inside container
+    test_args = {tc["id"]: tc.get("args", []) for tc in test_cases}
+    harness = f"""
+import json, sys
+
+{code}
+
+test_inputs = {json.dumps(test_args)}
+results = {{}}
+
+fn = globals().get('{func_name}')
+if not callable(fn):
+    print("---BATCH_TEST_START---")
+    print(json.dumps({{"_global_error": "Function not callable"}}))
+    print("---BATCH_TEST_END---")
+    sys.exit(0)
+
+for cid, args in test_inputs.items():
+    try:
+        if isinstance(args, list):
+            res = fn(*args)
+        else:
+            res = fn(args)
+        results[cid] = {{"ok": True, "output": str(res)}}
+    except Exception as e:
+        results[cid] = {{"ok": False, "error": str(e), "error_type": type(e).__name__}}
+
+print("---BATCH_TEST_START---")
+print(json.dumps(results))
+print("---BATCH_TEST_END---")
+"""
+    try:
+        exec_res = _execute_in_docker_container_multilang(
+            code=harness,
+            language="python",
+            custom_stdin=None,
+            timeout=5.0
+        )
+        if exec_res.get("status") == "TIMEOUT":
+            for tc in test_cases:
+                tc["status"] = "TIMEOUT"
+                tc["actual_output"] = None
+                tc["verification_note"] = "Sandbox execution timed out."
+            return test_cases
+
+        stdout = exec_res.get("stdout", "")
+        if "---BATCH_TEST_START---" in stdout and "---BATCH_TEST_END---" in stdout:
+            payload = stdout.split("---BATCH_TEST_START---")[1].split("---BATCH_TEST_END---")[0].strip()
+            batch_data = json.loads(payload)
+
+            for tc in test_cases:
+                cid = tc["id"]
+                if cid in batch_data:
+                    res_item = batch_data[cid]
+                    if res_item.get("ok"):
+                        tc["status"] = "PASS"
+                        tc["actual_output"] = res_item.get("output")
+                        tc["verification_note"] = "Executed cleanly without exceptions in Docker sandbox."
+                    else:
+                        tc["status"] = "RUNTIME_ERROR"
+                        tc["actual_output"] = res_item.get("error")
+                        tc["verification_note"] = f"Runtime error in sandbox: {res_item.get('error_type')}"
+                else:
+                    tc["status"] = "UNVERIFIED"
+                    tc["actual_output"] = None
+                    tc["verification_note"] = "Not evaluated in batch runner."
+            return test_cases
+    except Exception as e:
+        logger.warning(f"Batch test verification failed: {e}")
+
+    for tc in test_cases:
+        tc["status"] = "UNVERIFIED"
+        tc["actual_output"] = None
+        tc["verification_note"] = "Sandbox verification encountered an unhandled exception."
+    return test_cases
 
 
 def _extract_function_signature(code: str, language: str) -> Dict[str, Any]:
@@ -400,4 +505,4 @@ def _extract_function_signature(code: str, language: str) -> Dict[str, Any]:
     if m2:
         return {"name": m2.group(1), "params": [p.strip() for p in m2.group(2).split(",") if p.strip()]}
 
-    return {"name": "main_function", "params": ["data"]}
+    return {"name": None, "params": []}
