@@ -720,11 +720,14 @@ console.log("Indices:", twoSum(nums, target));
             if (data.success && data.languages && languageSelect) {
                 const currentVal = languageSelect.value || state.language || "python";
                 languageSelect.innerHTML = "";
-                Object.entries(data.languages).forEach(([langKey, info]) => {
+                const list = Array.isArray(data.languages) ? data.languages : Object.entries(data.languages).map(([k, v]) => ({ language: k, ...v }));
+                list.forEach((item) => {
+                    const langKey = item.language;
+                    if (!langKey) return;
                     const opt = document.createElement("option");
                     opt.value = langKey;
-                    const readyIndicator = info.runnable ? "✓ Ready" : "Static";
-                    const displayName = info.display_name || langKey.toUpperCase();
+                    const readyIndicator = item.runnable ? "✓ Ready" : "Static";
+                    const displayName = item.display_name || langKey.toUpperCase();
                     opt.textContent = `${displayName} (${readyIndicator})`;
                     if (langKey === currentVal) opt.selected = true;
                     languageSelect.appendChild(opt);
