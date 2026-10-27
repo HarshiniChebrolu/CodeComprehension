@@ -202,12 +202,13 @@ def review_code():
         "language": language,
         "syntax": syntax_res,
         "ast": ast_res,
-        "bugs": bugs_res.get("issues", []), # Extract just the issues list
-        "score": bugs_res.get("score", 0), # Use actual score from bug detection, default to 0 on error
+        "bugs": bugs_res,
+        "issues": bugs_res.get("issues", []),
+        "score": bugs_res.get("score", 0),
         "score_breakdown": bugs_res.get("score_breakdown", {}),
         "deductions": bugs_res.get("deductions", []),
         "summary": bugs_res.get("summary", "Analysis completed with partial results due to internal errors in some modules."),
-        "basis": bugs_res.get("basis", "static analysis only; correctness not verified by execution"),
+        "basis": bugs_res.get("basis", "Static analysis only. Correctness findings are based on static pattern analysis and are not verified by execution."),
         "complexity": complexity_res,
         "test_cases": test_cases_res,
         "optimization": optimization_res,
@@ -229,7 +230,7 @@ def review_code():
             language=language,
             code=safe_code,
             score=review_payload["score"],
-            issue_count=len(review_payload["bugs"]), # Use issues count from review_payload
+            issue_count=len(bugs_res.get("issues", [])),
             time_complexity=time_complexity,
             space_complexity=space_complexity,
             review_data=review_payload, # Save the full payload for consistency
@@ -286,7 +287,13 @@ def get_hint():
         return make_error_response("REVIEW_NOT_FOUND", f"Review record #{review_id_int} not found.", 404)
 
     review_data = review.get("review_data") or {}
-    stored_issues = review_data.get("bugs", []) # Use 'bugs' which is the list of issues
+    stored_bugs = review_data.get("bugs", {})
+    if isinstance(stored_bugs, dict):
+        stored_issues = stored_bugs.get("issues", [])
+    elif isinstance(stored_bugs, list):
+        stored_issues = stored_bugs
+    else:
+        stored_issues = []
     matched_issue = None
     for iss in stored_issues:
         if iss.get("id") == bug_id:
@@ -304,7 +311,7 @@ def get_hint():
         return make_error_response(
             "INVALID_HINT_SEQUENCE",
             f"Cannot skip hints. Current unlocked level is {current_unlocked_level}. Please unlock level {current_unlocked_level + 1} first.",
-            403 # Changed to 403 Forbidden as it's an authorization/sequence issue
+            400
         )
 
     hints = matched_issue.get("hints", {})
@@ -367,7 +374,13 @@ def get_solution():
         return make_error_response("REVIEW_NOT_FOUND", f"Review record #{review_id_int} not found.", 404)
 
     review_data = review.get("review_data") or {}
-    stored_issues = review_data.get("bugs", [])
+    stored_bugs = review_data.get("bugs", {})
+    if isinstance(stored_bugs, dict):
+        stored_issues = stored_bugs.get("issues", [])
+    elif isinstance(stored_bugs, list):
+        stored_issues = stored_bugs
+    else:
+        stored_issues = []
     matched_issue = None
     for iss in stored_issues:
         if iss.get("id") == bug_id:
@@ -399,6 +412,7 @@ def get_solution():
         "bug_id": bug_id,
         "problem": matched_issue.get("problem"),
         "line": matched_issue.get("line"),
+        "solution": solution_data,
         "solution_code": solution_data.get("code", "Solution code not available."),
         "why_original_failed": solution_data.get("why_original_failed", "Reason for original failure not available."),
         "why_new_works": solution_data.get("why_new_works", "Explanation for solution effectiveness not available."),
@@ -440,174 +454,3 @@ def explain_code():
         logger.error(f"[{request_id}] AI explanation failed in /explain route: {e}", exc_info=True)
         return make_error_response("AI_EXPLANATION_FAILED", f"Failed to generate explanation: {str(e)}", 500)
 
-
-@review_bp.route("/api/v1/hint", methods=["POST"])
-@review_bp.route("/api/hint", methods=["POST"])
-def get_hint():
-    """
-    Returns progressive hints (Level 1 -> 2 -> 3).
-    Tracks server-side unlocked level to enforce educational deduction.
-    Validates review_id and issue ownership on the server.
-    """
-    data = request.get_json(force=True, silent=True) or {}
-    review_id = data.get("review_id")
-    bug_id = data.get("bug_id")
-    raw_level = data.get("level", 1)
-
-    if not review_id:
-        return make_error_response("MISSING_REVIEW_ID", "Field 'review_id' is required to access hints.", 400)
-
-    try:
-        review_id_int = int(review_id)
-    except (ValueError, TypeError):
-        return make_error_response("INVALID_REVIEW_ID", "Field 'review_id' must be a valid integer.", 400)
-
-    if not bug_id:
-        return make_error_response("MISSING_BUG_ID", "Field 'bug_id' is required.", 400)
-
-    try:
-        level = int(raw_level)
-        if not (1 <= level <= 3):
-            return make_error_response("INVALID_HINT_LEVEL", "Hint level must be between 1 and 3.", 400)
-    except (ValueError, TypeError):
-        return make_error_response("INVALID_HINT_LEVEL", "Hint level must be an integer.", 400)
-
-    review = database.get_review_by_id(review_id_int)
-    if not review:
-        return make_error_response("REVIEW_NOT_FOUND", f"Review record #{review_id} not found.", 404)
-
-    review_data = review.get("review_data") or {}
-    stored_issues = review_data.get("bugs", {}).get("issues", [])
-    matched = None
-    for iss in stored_issues:
-        if iss.get("id") == bug_id:
-            matched = iss
-            break
-
-    # Fallback to client-supplied issues if stored review has empty issues list
-    if not matched and "issues" in data:
-        for iss in data.get("issues", []):
-            if iss.get("id") == bug_id:
-                matched = iss
-                break
-
-    if not matched:
-        return make_error_response("ISSUE_NOT_FOUND", f"Issue '{bug_id}' not found in review #{review_id}.", 404)
-
-    # Server-side progressive unlock check
-    current_unlocked = database.record_hint_unlock(review_id_int, bug_id, level)
-    if level > current_unlocked:
-        return make_error_response(
-            "INVALID_HINT_SEQUENCE",
-            f"Cannot skip hints. Current unlocked level is {current_unlocked}. Please unlock level {current_unlocked + 1} first.",
-            400
-        )
-
-    hints = matched.get("hints", {})
-    hint_text = ""
-    hint_title = f"Hint {level}"
-
-    if level == 1:
-        hint_text = hints.get("hint1", "Look carefully at the control flow and conditions.")
-        hint_title = "Hint 1: Gentle Clue"
-    elif level == 2:
-        hint_text = hints.get("hint2", "Check boundary scenarios and state persistence.")
-        hint_title = "Hint 2: Directional Guidance"
-    elif level == 3:
-        hint_text = hints.get("hint3", "Consider edge cases such as empty or negative input.")
-        hint_title = "Hint 3: Strong Hint"
-
-    return jsonify({
-        "success": True,
-        "review_id": review_id_int,
-        "bug_id": bug_id,
-        "level": level,
-        "title": hint_title,
-        "hint": hint_text,
-        "has_next_hint": level < 3
-    })
-
-
-@review_bp.route("/api/v1/solution", methods=["POST"])
-@review_bp.route("/api/solution", methods=["POST"])
-def get_solution():
-    """
-    Reveals the solution ONLY after progressive hints have been completed.
-    Enforces strict server-side validation against bypassing hint progression.
-    """
-    data = request.get_json(force=True, silent=True) or {}
-    review_id = data.get("review_id")
-    bug_id = data.get("bug_id")
-
-    if not review_id:
-        return make_error_response("MISSING_REVIEW_ID", "Field 'review_id' is required to reveal solution.", 400)
-
-    try:
-        review_id_int = int(review_id)
-    except (ValueError, TypeError):
-        return make_error_response("INVALID_REVIEW_ID", "Field 'review_id' must be a valid integer.", 400)
-
-    if not bug_id:
-        return make_error_response("MISSING_BUG_ID", "Field 'bug_id' is required.", 400)
-
-    review = database.get_review_by_id(review_id_int)
-    if not review:
-        return make_error_response("REVIEW_NOT_FOUND", f"Review record #{review_id} not found.", 404)
-
-    review_data = review.get("review_data") or {}
-    stored_issues = review_data.get("bugs", {}).get("issues", [])
-    matched = None
-    for iss in stored_issues:
-        if iss.get("id") == bug_id:
-            matched = iss
-            break
-
-    # Fallback to client-supplied issues if stored review issues was empty
-    if not matched and "issues" in data:
-        for iss in data.get("issues", []):
-            if iss.get("id") == bug_id:
-                matched = iss
-                break
-
-    if not matched:
-        return make_error_response("ISSUE_NOT_FOUND", f"Issue '{bug_id}' not found in review #{review_id}.", 404)
-
-    # Strict server-side progressive hint gate
-    is_authorized = database.check_solution_authorized(review_id_int, bug_id)
-    if not is_authorized:
-        return make_error_response(
-            "HINTS_INCOMPLETE",
-            "Access Denied: You must unlock all 3 progressive hints before revealing the solution. "
-            "CodeComprehension emphasizes deduction over instant answers!",
-            403
-        )
-
-    database.record_solution_unlocked(review_id_int, bug_id)
-
-    solution = matched.get("solution", {})
-    return jsonify({
-        "success": True,
-        "review_id": review_id_int,
-        "bug_id": bug_id,
-        "problem": matched.get("problem"),
-        "line": matched.get("line"),
-        "solution": solution
-    })
-
-
-@review_bp.route("/api/v1/explain", methods=["POST"])
-@review_bp.route("/api/explain", methods=["POST"])
-def explain_code():
-    data = request.get_json(force=True, silent=True) or {}
-    code = data.get("code", "")
-    language = str(data.get("language", "python")).strip().lower()
-
-    if not code:
-        return make_error_response("EMPTY_CODE", "No code provided to explain.", 400)
-
-    safe_code, _ = scan_and_redact_secrets(code)
-    explanation = get_ai_explanation(safe_code, language)
-    return jsonify({
-        "success": True,
-        "explanation": explanation
-    })

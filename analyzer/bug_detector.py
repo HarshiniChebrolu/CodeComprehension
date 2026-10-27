@@ -308,6 +308,98 @@ class BugDetectorVisitor(ast.NodeVisitor):
             return "value"
 
 
+def _calculate_score_and_deductions(unique_issues: List[Dict[str, Any]]) -> Dict[str, Any]:
+    severity_deductions = {
+        "CRITICAL": 30,
+        "HIGH": 15,
+        "MEDIUM": 8,
+        "LOW": 4,
+        "INFO": 2
+    }
+
+    metric_deductions = {
+        "correctness": 0,
+        "readability": 0,
+        "maintainability": 0,
+        "efficiency": 0,
+        "security": 0,
+        "best_practices": 0
+    }
+
+    deductions = []
+    overall_score = 100
+
+    for iss in unique_issues:
+        sev = iss.get("severity", "MEDIUM")
+        cat = iss.get("category", "")
+        rule_id = iss.get("rule_id", "UNKNOWN_RULE")
+        line = iss.get("line", 1)
+        problem = iss.get("problem", "Detected issue")
+        pts = severity_deductions.get(sev, 5)
+
+        overall_score -= pts
+
+        if any(w in cat for w in ("Syntax", "Logic", "Index", "Runtime", "Type")):
+            metric = "correctness"
+            metric_deductions["correctness"] += pts * 1.5
+        elif any(w in cat for w in ("Smell", "Style", "Naming")):
+            metric = "readability"
+            metric_deductions["readability"] += pts
+            metric_deductions["maintainability"] += pts * 0.5
+        elif any(w in cat for w in ("Dead", "Complexity", "Structure")):
+            metric = "maintainability"
+            metric_deductions["maintainability"] += pts
+            metric_deductions["readability"] += pts * 0.5
+        elif any(w in cat for w in ("Performance", "Efficiency", "Resource")):
+            metric = "efficiency"
+            metric_deductions["efficiency"] += pts
+        elif any(w in cat for w in ("Security", "Vulnerability", "Injection")):
+            metric = "security"
+            metric_deductions["security"] += pts
+            metric_deductions["best_practices"] += pts * 0.5
+        else:
+            metric = "best_practices"
+            metric_deductions["best_practices"] += pts
+            metric_deductions["maintainability"] += pts * 0.5
+
+        deductions.append({
+            "rule_id": rule_id,
+            "metric": metric,
+            "points": pts,
+            "reason": problem,
+            "line": line
+        })
+
+    overall_score = max(0, min(100, int(overall_score)))
+
+    score_breakdown = {
+        "correctness": max(0, min(100, int(100 - metric_deductions["correctness"]))),
+        "readability": max(0, min(100, int(100 - metric_deductions["readability"]))),
+        "maintainability": max(0, min(100, int(100 - metric_deductions["maintainability"]))),
+        "efficiency": max(0, min(100, int(100 - metric_deductions["efficiency"]))),
+        "security": max(0, min(100, int(100 - metric_deductions["security"]))),
+        "best_practices": max(0, min(100, int(100 - metric_deductions["best_practices"])))
+    }
+
+    issue_count = len(unique_issues)
+    if issue_count == 0:
+        summary = "Clean code! No critical syntax, logic, or runtime defects detected."
+    elif any(i.get("severity") == "CRITICAL" for i in unique_issues):
+        summary = f"Found {issue_count} issue(s) including critical errors that prevent successful execution."
+    else:
+        summary = f"Detected {issue_count} issue(s) ranging from runtime risks to code quality improvements."
+
+    basis = "Deterministic static analysis and pattern matching. Correctness findings are based on static pattern analysis and are not verified by execution."
+
+    return {
+        "score": overall_score,
+        "score_breakdown": score_breakdown,
+        "deductions": deductions,
+        "summary": summary,
+        "basis": basis
+    }
+
+
 def detect_bugs(code: str, language: str = "python") -> Dict[str, Any]:
     """
     Performs comprehensive static analysis, finding logical bugs, security risks,
@@ -328,7 +420,9 @@ def detect_bugs(code: str, language: str = "python") -> Dict[str, Any]:
                 "security": 100,
                 "best_practices": 100
             },
-            "summary": "No code submitted."
+            "deductions": [],
+            "summary": "No code submitted.",
+            "basis": "Static analysis only. Correctness findings are based on static pattern analysis and are not verified by execution."
         }
 
     # Python AST analysis
@@ -557,7 +651,7 @@ def detect_bugs(code: str, language: str = "python") -> Dict[str, Any]:
 
             if stripped and not is_comment_or_preproc and not is_block_structural:
                 # This regex heuristic is still not perfect but catches many cases
-                if any(stripped.startswith(k) for k in ("int ", "float ", "double ", "char ", "return ", "cout ", "cin ", "System.out", "auto ", "string ", "vector<", "if (", "while (", "for (")) and not stripped.endswith(";") and not stripped.endswith(")")):
+                if any(stripped.startswith(k) for k in ("int ", "float ", "double ", "char ", "return ", "cout ", "cin ", "System.out", "auto ", "string ", "vector<", "if (", "while (", "for (")) and not stripped.endswith(";") and not stripped.endswith(")"):
                     if not re.match(r'^(if|while|for|switch|do)\s*\(.*', stripped): # Don't flag control flow headers
                         issues.append({
                             "id": f"missing_semicolon_{idx}",

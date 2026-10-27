@@ -50,49 +50,51 @@ class AppSettings(BaseSettings):
     EXECUTION_TIMEOUT: float = 5.0
     MAX_OUTPUT_CHARS: int = 10000
 
-    # Language Registry
-    SUPPORTED_LANGUAGES: Dict[str, Dict[str, Any]] = {
-        "python": {
-            "extension": "py",
-            "docker_image": "python:3.10-slim-bullseye",
-            "compile_command": None,
-            "run_command": "python main.py",
-            "compile_timeout": 5.0,
-            "run_timeout": 5.0,
-        },
-        "javascript": {
-            "extension": "js",
-            "docker_image": "node:18-slim",
-            "compile_command": None,
-            "run_command": "node main.js",
-            "compile_timeout": 5.0,
-            "run_timeout": 5.0,
-        },
-        "java": {
-            "extension": "java",
-            "docker_image": "openjdk:17-jdk-slim",
-            "compile_command": "javac Main.java",
-            "run_command": "java Main",
-            "compile_timeout": 10.0,
-            "run_timeout": 5.0,
-        },
-        "c": {
-            "extension": "c",
-            "docker_image": "gcc:latest",
-            "compile_command": "gcc main.c -o main",
-            "run_command": "./main",
-            "compile_timeout": 10.0,
-            "run_timeout": 5.0,
-        },
-        "cpp": {
-            "extension": "cpp",
-            "docker_image": "gcc:latest",
-            "compile_command": "g++ main.cpp -o main",
-            "run_command": "./main",
-            "compile_timeout": 10.0,
-            "run_timeout": 5.0,
-        },
-    }
+    # Language Registry with pinned, maintained tags and env var overrides
+    SUPPORTED_LANGUAGES: Dict[str, Dict[str, Any]] = Field(
+        default_factory=lambda: {
+            "python": {
+                "extension": "py",
+                "docker_image": os.environ.get("DOCKER_IMAGE_PYTHON", "python:3.12-alpine"),
+                "compile_command": None,
+                "run_command": "python main.py",
+                "compile_timeout": float(os.environ.get("COMPILE_TIMEOUT_PYTHON", "5.0")),
+                "run_timeout": float(os.environ.get("RUN_TIMEOUT_PYTHON", "5.0")),
+            },
+            "javascript": {
+                "extension": "js",
+                "docker_image": os.environ.get("DOCKER_IMAGE_JAVASCRIPT", "node:18-alpine"),
+                "compile_command": None,
+                "run_command": "node main.js",
+                "compile_timeout": float(os.environ.get("COMPILE_TIMEOUT_JAVASCRIPT", "5.0")),
+                "run_timeout": float(os.environ.get("RUN_TIMEOUT_JAVASCRIPT", "5.0")),
+            },
+            "java": {
+                "extension": "java",
+                "docker_image": os.environ.get("DOCKER_IMAGE_JAVA", "eclipse-temurin:17-jdk-alpine"),
+                "compile_command": "javac Main.java",
+                "run_command": "java Main",
+                "compile_timeout": float(os.environ.get("COMPILE_TIMEOUT_JAVA", "10.0")),
+                "run_timeout": float(os.environ.get("RUN_TIMEOUT_JAVA", "5.0")),
+            },
+            "c": {
+                "extension": "c",
+                "docker_image": os.environ.get("DOCKER_IMAGE_C", "gcc:13.2.0"),
+                "compile_command": "gcc main.c -o main",
+                "run_command": "./main",
+                "compile_timeout": float(os.environ.get("COMPILE_TIMEOUT_C", "10.0")),
+                "run_timeout": float(os.environ.get("RUN_TIMEOUT_C", "5.0")),
+            },
+            "cpp": {
+                "extension": "cpp",
+                "docker_image": os.environ.get("DOCKER_IMAGE_CPP", "gcc:13.2.0"),
+                "compile_command": "g++ main.cpp -o main",
+                "run_command": "./main",
+                "compile_timeout": float(os.environ.get("COMPILE_TIMEOUT_CPP", "10.0")),
+                "run_timeout": float(os.environ.get("RUN_TIMEOUT_CPP", "5.0")),
+            },
+        }
+    )
 
     LANGUAGE_ALIASES: Dict[str, str] = {
         "py": "python",
@@ -199,7 +201,9 @@ class Config:
     SUPPORTED_LANGUAGES = settings.SUPPORTED_LANGUAGES
     LANGUAGE_ALIASES = settings.LANGUAGE_ALIASES
     MAX_CODE_LENGTH = settings.MAX_CODE_LENGTH
+    MAX_STDIN_LENGTH = settings.MAX_STDIN_LENGTH
     MAX_CONTENT_LENGTH = settings.MAX_CONTENT_LENGTH
+    DOCKER_CONTAINER_NAME_PREFIX = settings.DOCKER_CONTAINER_NAME_PREFIX
     HOST = settings.HOST
     PORT = settings.PORT
     FLASK_ENV = settings.FLASK_ENV

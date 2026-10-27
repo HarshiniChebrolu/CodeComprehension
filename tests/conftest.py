@@ -23,7 +23,8 @@ def app():
         "SECRET_KEY": "test-suite-secure-ephemeral-key-9999",
         "EXECUTION_TIMEOUT": 15.0,
         "MAX_CODE_LENGTH": 50000,
-        "DEFAULT_AI_PROVIDER": "offline"
+        "DEFAULT_AI_PROVIDER": "offline",
+        "RATELIMIT_ENABLED": False
     }
 
     # Set database path in Config module

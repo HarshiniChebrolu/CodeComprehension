@@ -6,16 +6,9 @@ import time
 import json
 import shutil
 import re
-import subprocess
-import sys
-import tempfile
-import os
-import time
-import json
-import shutil
-import re
 import logging
 import uuid
+import base64
 from config import Config
 from typing import Dict, Any, List, Tuple, Optional
 
@@ -267,6 +260,15 @@ def _execute_in_docker_container_multilang(
     Executes user code strictly inside an ephemeral, non-root Docker container
     with complete network, process, memory, filesystem, and capability isolation.
     Supports multiple languages by dynamically selecting Docker image and commands.
+
+    Deliberate Security Trade-off:
+    While /tmp is mounted with noexec to block unauthorized binary execution in temporary
+    scratch space, /work is provisioned as an in-memory tmpfs with exec permission
+    (--tmpfs /work:rw,exec,nosuid,size=32m,uid=1000,gid=1000,mode=1777). This allows compiling
+    and executing binaries (C, C++, Java) and scripts (Python, JS) without touching the host
+    filesystem, strictly bounded by non-root execution (--user 1000:1000), total network cutoff
+    (--network none), memory bounds (--memory 128m), CPU limits (--cpus 1.0), capability drops
+    (--cap-drop ALL), and root filesystem immutability (--read-only).
     """
     lang_config = Config.SUPPORTED_LANGUAGES.get(language)
     if not lang_config:
@@ -282,86 +284,101 @@ def _execute_in_docker_container_multilang(
 
     docker_image = lang_config["docker_image"]
     extension = lang_config["extension"]
-    compile_command_tpl = lang_config["compile_command"]
-    run_command_tpl = lang_config["run_command"]
-    compile_timeout = lang_config["compile_timeout"]
-    run_timeout = lang_config["run_timeout"]
+    compile_command_tpl = lang_config.get("compile_command")
+    run_command_tpl = lang_config.get("run_command")
 
     container_name = f"{Config.DOCKER_CONTAINER_NAME_PREFIX}{uuid.uuid4().hex}"
     source_filename = f"main.{extension}"
-    exec_filename = "a.out" # Default executable name for C/C++/Java (Java class name will override)
+    exec_filename = "main"
 
-    # For Java, the main file name must match the public class name
+    # Java class name handling
     if language == "java":
         class_name_match = re.search(r'\bpublic\s+class\s+([a-zA-Z0-9_]+)', code)
         if class_name_match:
             source_filename = f"{class_name_match.group(1)}.java"
-            exec_filename = class_name_match.group(1) # For java Main command
+            exec_filename = class_name_match.group(1)
         else:
-            # If no public class found, assume default 'Main' and wrap code
             source_filename = "Main.java"
             exec_filename = "Main"
-            if "class " not in code: # Simple code without a class
+            if "class " not in code:
                 code = f"""public class Main {{
     public static void main(String[] args) {{
         {code}
     }}
 }}"""
-            elif "main(" not in code and "main (" not in code: # Class exists, but no main method
-                 code = f"""public class {exec_filename} {{
+            elif "main(" not in code and "main (" not in code:
+                code = f"""public class {exec_filename} {{
     public static void main(String[] args) {{
         {code}
     }}
 }}"""
 
-
-    # Construct the commands to be run inside the container
-    container_commands = []
+    final_compile_command = None
     if compile_command_tpl:
-        # Example: "gcc main.c -o main"
-        container_commands.append(compile_command_tpl.replace("main.c", source_filename).replace("main.cpp", source_filename).replace("Main.java", source_filename).replace("main", exec_filename))
-    
-    # Python/JS specific runner for stdin integration
-    if language in ("python", "javascript", "js"):
-        runner_script_content = (
-            "import sys, io\n"
-            f"__stdin_payload__ = {repr(custom_stdin)}\n"
-            "sys.stdin = io.StringIO(__stdin_payload__)\n"
-            # Python specific entrypoint, other languages just write to file
-            + code
+        final_compile_command = (
+            compile_command_tpl
+            .replace("main.c", source_filename)
+            .replace("main.cpp", source_filename)
+            .replace("Main.java", source_filename)
+            .replace("main", exec_filename)
         )
-        # For Python/JS, we inject code directly into the runner.sh, then run it.
-        # This simplifies stdin handling across environments.
-        # The main.{ext} file will still be created but won't be used by the runner_script_content
-        # unless it explicitly imports/execs it, which is not the standard case.
-        # For languages where stdin is passed to a compiled binary, we'll write `code` to source_filename
-        # and pipe `custom_stdin` to the executed command.
 
-        # For Python/JS, the 'run_command' will typically be "python main.py" or "node main.js"
-        # We need to create the main file, and if stdin is present, a script to pipe it.
-        pass # The logic below will handle writing the code.
+    final_run_command = None
+    if run_command_tpl:
+        final_run_command = (
+            run_command_tpl
+            .replace("main.py", source_filename)
+            .replace("main.js", source_filename)
+            .replace("main.c", source_filename)
+            .replace("main.cpp", source_filename)
+            .replace("Main", exec_filename)
+        )
 
-    # Base Docker command for running the container
-    docker_run_cmd = [
-        "docker", "run",
-        "--name", container_name,
-        "--rm",                   # Automatically remove the container when it exits
-        "-i",                     # Keep STDIN open even if not attached
-        "--network", "none",      # No network access
-        "--read-only",            # Read-only root filesystem
-        "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m", # Ephemeral memory-only scratchpad
-        "--user", "1000:1000",    # Non-root execution
-        "--cpus", "1.0",          # Limit to 1 CPU core
-        "--memory", "128m",       # Limit to 128 MB RAM
-        "--pids-limit", "32",     # Limit to 32 processes
-        "--cap-drop", "ALL",      # Drop all Linux capabilities
-        "--security-opt", "no-new-privileges", # Blocks privilege escalation
-        docker_image,             # The specific Docker image for the language
+    code_b64 = base64.b64encode(code.encode("utf-8")).decode("ascii")
+    stdin_b64 = base64.b64encode((custom_stdin or "").encode("utf-8")).decode("ascii")
+
+    # In-container shell script using /bin/sh
+    shell_steps = [
+        f"echo '{code_b64}' | base64 -d > {source_filename}",
+        f"echo '{stdin_b64}' | base64 -d > stdin.txt"
     ]
 
-    final_exec_command = None
-    if run_command_tpl:
-        final_exec_command = run_command_tpl.replace("main.py", source_filename).replace("main.js", source_filename).replace("main.c", source_filename).replace("main.cpp", source_filename).replace("Main", exec_filename)
+    if final_compile_command:
+        shell_steps.append(
+            f"if ! {final_compile_command} 2> compile_stderr.txt; then "
+            f"echo 'COMPILATION_ERROR'; cat compile_stderr.txt; exit 1; fi"
+        )
+
+    if final_run_command:
+        shell_steps.append(
+            f"if ! {final_run_command} < stdin.txt 2> run_stderr.txt > run_stdout.txt; then "
+            f"echo 'RUNTIME_ERROR'; cat run_stderr.txt; exit 1; fi"
+        )
+        shell_steps.append("cat run_stdout.txt")
+    else:
+        shell_steps.append(f"echo 'No run command specified for {language}.'")
+
+    in_container_script = " && ".join(shell_steps)
+
+    cmd = [
+        "docker", "run",
+        "--name", container_name,
+        "--rm",
+        "-i",
+        "--network", "none",
+        "--read-only",
+        "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
+        "--tmpfs", "/work:rw,exec,nosuid,size=32m,uid=1000,gid=1000,mode=1777",
+        "--workdir", "/work",
+        "--user", "1000:1000",
+        "--cpus", "1.0",
+        "--memory", "128m",
+        "--pids-limit", "32",
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        docker_image,
+        "/bin/sh", "-c", in_container_script
+    ]
 
     compile_output = ""
     stdout_output = ""
@@ -371,81 +388,14 @@ def _execute_in_docker_container_multilang(
     status = "ERROR"
     truncated = False
 
-    temp_host_dir = tempfile.mkdtemp()
+    start_time = time.perf_counter()
     try:
-        # Create a shell script to manage compilation and execution within the container
-        runner_script_path = os.path.join(temp_host_dir, "runner.sh")
-        source_code_path = os.path.join(temp_host_dir, source_filename)
-        stdin_path = os.path.join(temp_host_dir, "stdin.txt")
-
-        # Write user code to file
-        with open(source_code_path, "w", encoding="utf-8") as f:
-            f.write(code)
-
-        # Write custom_stdin to file
-        with open(stdin_path, "w", encoding="utf-8") as f:
-            f.write(custom_stdin)
-
-        # Prepare the runner.sh script content
-        runner_script_content_list = [
-            "#!/bin/bash",
-            "set -euo pipefail", # Exit immediately if a command exits with a non-zero status.
-            "cd /tmp",
-            f"echo '{code}' > {source_filename}", # Always write user code
-            f"echo '{custom_stdin}' > stdin.txt", # Always write stdin
-        ]
-        
-        # Handle compilation
-        if compile_command_tpl:
-            # We need to dynamically adjust the compile command for Java class names too
-            compile_cmd_in_container = compile_command_tpl.replace("main.c", source_filename).replace("main.cpp", source_filename).replace("Main.java", source_filename).replace("main", exec_filename)
-            runner_script_content_list.append(f"COMPILE_START=$(date +%s%N)")
-            runner_script_content_list.append(f"if ! {compile_cmd_in_container} 2> compile_stderr.txt; then")
-            runner_script_content_list.append(f"  echo 'COMPILATION_ERROR'")
-            runner_script_content_list.append(f"  cat compile_stderr.txt")
-            runner_script_content_list.append(f"  exit 1")
-            runner_script_content_list.append(f"fi")
-            runner_script_content_list.append(f"COMPILE_END=$(date +%s%N)")
-            runner_script_content_list.append(f"echo 'COMPILE_DURATION:'$(($(COMPILE_END - COMPILE_START)/1000000))")
-
-        # Handle execution
-        if final_exec_command:
-            runner_script_content_list.append(f"RUN_START=$(date +%s%N)")
-            # Pipe stdin to the running command
-            runner_script_content_list.append(f"if ! {final_exec_command} < stdin.txt 2> run_stderr.txt > run_stdout.txt; then")
-            runner_script_content_list.append(f"  echo 'RUNTIME_ERROR'")
-            runner_script_content_list.append(f"  cat run_stderr.txt")
-            runner_script_content_list.append(f"  exit 1")
-            runner_script_content_list.append(f"fi")
-            runner_script_content_list.append(f"RUN_END=$(date +%s%N)")
-            runner_script_content_list.append(f"echo 'RUN_DURATION:'$(($(RUN_END - RUN_START)/1000000))")
-            runner_script_content_list.append(f"cat run_stdout.txt")
-        else:
-            runner_script_content_list.append(f"echo 'No run command specified for {language}.'")
-
-
-        runner_script_content = "\n".join(runner_script_content_list)
-        with open(runner_script_path, "w", encoding="utf-8") as f:
-            f.write(runner_script_content)
-        os.chmod(runner_script_path, 0o755) # Make it executable
-
-        # The Docker command to run the runner.sh script
-        # We mount the temporary directory as /tmp in the container, and runner.sh will cd into it.
-        cmd = docker_run_cmd + [
-            "-v", f"{temp_host_dir}:/tmp", # Mount host temp dir to /tmp in container
-            "bash", "/tmp/runner.sh"
-        ]
-
-        logger.debug(f"Executing Docker command: {' '.join(cmd)}")
-        
-        start_time = time.perf_counter()
-        
         proc = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout # Overall timeout for the entire docker run command
+            timeout=timeout
         )
         elapsed_s = time.perf_counter() - start_time
         total_duration_ms = round(elapsed_s * 1000, 2)
@@ -454,71 +404,40 @@ def _execute_in_docker_container_multilang(
         raw_stderr = proc.stderr
         actual_exit_code = proc.returncode
 
-        # Docker exit code 137 typically means OOM or SIGKILL
         if actual_exit_code == 137:
             status = "MEMORY_LIMIT_EXCEEDED"
             stderr_output = "Execution terminated: Process exceeded the 128MB container memory limit (Out of Memory)."
             logger.warning(f"Container {container_name} OOM/SIGKILL (exit 137).")
         elif actual_exit_code != 0:
-            # Check for specific markers from runner.sh
             if "COMPILATION_ERROR" in raw_stdout:
                 status = "COMPILE_ERROR"
-                compile_output = raw_stdout.split("COMPILATION_ERROR\n", 1)[1].strip()
-                stderr_output = compile_output # Use compile output as stderr for compile errors
-                logger.debug(f"Compilation error for {language} in {container_name}.")
+                compile_output = raw_stdout.split("COMPILATION_ERROR\n", 1)[-1].strip()
+                stderr_output = compile_output
             elif "RUNTIME_ERROR" in raw_stdout:
                 status = "RUNTIME_ERROR"
-                stdout_output = raw_stdout.split("RUNTIME_ERROR\n", 1)[0].strip()
-                stderr_output = raw_stdout.split("RUNTIME_ERROR\n", 1)[1].strip()
-                logger.debug(f"Runtime error for {language} in {container_name}.")
+                parts = raw_stdout.split("RUNTIME_ERROR\n", 1)
+                stdout_output = parts[0].strip()
+                stderr_output = parts[1].strip() if len(parts) > 1 else raw_stderr.strip()
             else:
-                # Generic error from Docker or the script, often in stderr
-                status = "RUNTIME_ERROR" # Or 'EXECUTION_FAILED'
-                stderr_output = raw_stdout + "\n" + raw_stderr # Combine for broader error info
-                logger.error(f"Unexpected non-zero exit ({actual_exit_code}) for {language} in {container_name}. Stderr: {raw_stderr}, Stdout: {raw_stdout}")
+                status = "RUNTIME_ERROR"
+                stderr_output = (raw_stdout + "\n" + raw_stderr).strip()
         else:
             status = "OK"
-            # Extract compile/run durations if available
-            compile_dur_match = re.search(r'COMPILE_DURATION:(\d+)', raw_stdout)
-            run_dur_match = re.search(r'RUN_DURATION:(\d+)', raw_stdout)
-            
-            stdout_content_raw = raw_stdout
-            if compile_command_tpl:
-                # Remove compile output (if any) and duration lines from final stdout
-                stdout_content_raw = re.sub(r'.*COMPILE_DURATION:\d+.*?\n?', '', stdout_content_raw, flags=re.DOTALL)
-            if run_command_tpl:
-                stdout_content_raw = re.sub(r'.*RUN_DURATION:\d+.*?\n?', '', stdout_content_raw, flags=re.DOTALL)
-
-            stdout_output = stdout_content_raw.strip()
-            stderr_output = raw_stderr.strip() # Should be empty on success
-
-            if compile_dur_match:
-                compile_output += f"Compile time: {compile_dur_match.group(1)}ms\n"
-            if run_dur_match:
-                total_duration_ms = float(run_dur_match.group(1)) # Use actual run duration
-            else:
-                total_duration_ms = round(elapsed_s * 1000, 2) # Fallback to total elapsed
-
-            logger.debug(f"Successfully executed {language} in {container_name}. Duration: {total_duration_ms}ms")
+            stdout_output = raw_stdout.strip()
+            stderr_output = raw_stderr.strip()
 
     except subprocess.TimeoutExpired:
-        # If docker run itself times out, this catch will trigger
         total_duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
         status = "TIMEOUT"
-        stderr_output = f"Execution Timed Out: Program exceeded the strict {timeout}s runtime threshold. The Docker container '{container_name}' was forcibly terminated."
-        logger.warning(f"Container {container_name} timed out after {timeout}s.")
-        # Attempt to kill the container if it's still running
+        stderr_output = f"Execution Timed Out: Program exceeded the strict {timeout}s runtime threshold."
         try:
             subprocess.run(["docker", "kill", container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5.0)
-        except Exception as kill_e:
-            logger.error(f"Failed to kill timed-out container {container_name}: {kill_e}")
+        except Exception:
+            pass
 
     except Exception as e:
-        logger.exception(f"Unexpected error during Docker sandbox execution for {language}: {e}")
         status = "CONTAINER_ERROR"
         stderr_output = f"Container Sandbox Error: {str(e)}"
-    finally:
-        shutil.rmtree(temp_host_dir, ignore_errors=True) # Clean up host temp directory
 
     # Truncate outputs
     if len(stdout_output) > Config.MAX_OUTPUT_CHARS:

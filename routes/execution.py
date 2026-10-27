@@ -68,12 +68,11 @@ def run_code():
     status_code = 200
     if result["status"] == "SECURITY_VIOLATION":
         status_code = 403
-    elif result["status"] in ["UNAVAILABLE", "DISABLED", "CONFIG_ERROR", "UNSUPPORTED_LANGUAGE", "SECURITY_ERROR"]:
-        status_code = 503 if result["status"] == "UNAVAILABLE" else 500
-    elif result["status"] == "COMPILE_ERROR":
+    elif result["status"] in ["UNAVAILABLE", "DISABLED", "CONFIG_ERROR", "SECURITY_ERROR"]:
+        status_code = 503
+    elif result["status"] == "UNSUPPORTED_LANGUAGE":
         status_code = 400
-    elif result["status"] in ["RUNTIME_ERROR", "TIMEOUT", "MEMORY_LIMIT_EXCEEDED"]:
-        status_code = 400
+    # Note: Program errors (RUNTIME_ERROR, COMPILE_ERROR, TIMEOUT, MEMORY_LIMIT_EXCEEDED) return HTTP 200 with status field
         
     logger.info(f"[{request_id}] Code execution finished with status: {result['status']}")
     return jsonify(result), status_code
