@@ -40,3 +40,5 @@ scratch/
 .DS_Store
 Thumbs.db
 .aider*
+*.zip
+
