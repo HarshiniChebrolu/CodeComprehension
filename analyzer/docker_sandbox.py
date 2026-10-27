@@ -97,8 +97,7 @@ def execute_in_docker_container(
         "--memory", "128m",
         "--pids-limit", "32",
         "--cap-drop", "ALL",
-        "--security-opt", "no-new-privileges",
-        "python:3.12-alpine",
+        Config.SUPPORTED_LANGUAGES.get("python", {}).get("docker_image", "python:3.12-alpine"),
         "python", "-u", "-"
     ]
 

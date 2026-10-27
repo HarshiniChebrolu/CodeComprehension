@@ -66,6 +66,21 @@ def analyze_syntax(code: str, language: str = "python") -> dict:
                 "has_ast": False
             }
     else:
+        # Detect language mismatch: Python syntax in compiled/curly-brace languages
+        if lang in ("java", "c", "cpp"):
+            for line_idx, line in enumerate(code.split("\n"), start=1):
+                stripped = line.strip()
+                if re.match(r'^def\s+[a-zA-Z_]\w*\s*\(', stripped) or stripped == "pass":
+                    return {
+                        "valid": False,
+                        "error": f"SyntaxError: Invalid {language.upper()} syntax. Python keyword '{stripped.split()[0]}' is not permitted in {language.upper()}.",
+                        "line": line_idx,
+                        "column": 0,
+                        "snippet": line,
+                        "details": f"The submitted code appears to be Python code, but the selected language is {language.upper()}.",
+                        "has_ast": False
+                    }
+
         # Static bracket and quote validation for C, C++, Java, JavaScript
         bracket_pairs = {'(': ')', '[': ']', '{': '}'}
         stack = []

@@ -243,6 +243,32 @@ def analyze_ast(code: str, language: str = "python") -> Dict[str, Any]:
 
 
 def _non_python_ast_summary(code: str, language: str) -> Dict[str, Any]:
+    # Language mismatch detection
+    if language in ("java", "c", "cpp"):
+        for line in code.split("\n"):
+            stripped = line.strip()
+            if re.match(r'^def\s+[a-zA-Z_]\w*\s*\(', stripped) or stripped == "pass":
+                return {
+                    "success": False,
+                    "error": f"Language mismatch: Python syntax detected in {language.upper()} submission.",
+                    "language": language,
+                    "is_heuristic": True,
+                    "structure_type": "heuristic_structural_outline",
+                    "functions": [],
+                    "classes": [],
+                    "imports": [],
+                    "flow_nodes": [],
+                    "flow_edges": [],
+                    "flow_chain": [],
+                    "metrics": {
+                        "functions_count": 0,
+                        "loops_count": 0,
+                        "branches_count": 0,
+                        "calls_count": 0,
+                        "max_nesting_depth": 0
+                    }
+                }
+
     lines = code.split("\n")
     flow_nodes = []
     edges = []
@@ -304,6 +330,8 @@ def _non_python_ast_summary(code: str, language: str) -> Dict[str, Any]:
     return {
         "success": True,
         "language": language,
+        "is_heuristic": True,
+        "structure_type": "heuristic_structural_outline",
         "functions": functions,
         "classes": classes,
         "imports": imports,
