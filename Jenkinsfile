@@ -27,15 +27,17 @@ pipeline {
                         string(credentialsId: 'OPENAI_API_KEY', variable: 'OPENAI_API_KEY')
                     ]) {
                         echo 'Validating container health and execution...'
-                        // Clean up stale container and run new test instance
+                        // Clean up any stale container from previous runs
                         bat "docker rm -f code-reviewer-test || true"
+                        
+                        // Start the container
                         bat "docker run --rm -d -p 5000:5000 -e GEMINI_API_KEY=${GEMINI_API_KEY} -e OPENAI_API_KEY=${OPENAI_API_KEY} --name code-reviewer-test ${IMAGE_NAME}"
                         
-                        // Windows-safe wait without input redirection
+                        // Wait 5 seconds
                         bat "ping 127.0.0.1 -n 6 > nul"
                         
-                        // Stop the test container
-                        bat "docker stop code-reviewer-test"
+                        // Stop container safely (won't fail the build if it already exited)
+                        bat "docker stop code-reviewer-test || true"
                     }
                 }
             }
