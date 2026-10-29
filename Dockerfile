@@ -1,6 +1,6 @@
 # ==============================================================================
 # Multi-stage Dockerfile for CodeComprehension
-# Runs under non-root user 'codeuser' with healthcheck probe
+# Runs under non-root user 'codeuser' with healthcheck probe & security hardening
 # ==============================================================================
 
 FROM python:3.12-slim AS builder
@@ -10,7 +10,9 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Update OS packages to patch vulnerabilities
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,8 +34,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOST=0.0.0.0 \
     DATABASE_PATH=/app/codecomprehension.db
 
-# Install runtime curl for healthcheck probe
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Update runtime OS packages and install curl for healthcheck probe
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,13 +44,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -g 1000 codeuser && \
     useradd -u 1000 -g codeuser -m codeuser
 
-# Copy installed Python packages from builder stage
+# Copy installed Python packages from builder stage and assign correct ownership
 COPY --from=builder /root/.local /home/codeuser/.local
+RUN chown -R codeuser:codeuser /home/codeuser/.local
 
 # Copy application source code
 COPY --chown=codeuser:codeuser . .
 
-# Grant codeuser full ownership and read/write permissions to the entire /app directory
+# Grant codeuser full ownership and permissions to the /app directory
 RUN chown -R codeuser:codeuser /app && chmod -R 775 /app
 
 # Switch to unprivileged non-root execution
