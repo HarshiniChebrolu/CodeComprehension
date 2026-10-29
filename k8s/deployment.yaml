@@ -17,7 +17,7 @@ spec:
       containers:
       - name: code-comprehension
         image: ai-code-reviewer:latest
-        imagePullPolicy: IfNotPresent # Uses your locally built Docker image
+        imagePullPolicy: IfNotPresent 
         ports:
         - containerPort: 5000
         env:
