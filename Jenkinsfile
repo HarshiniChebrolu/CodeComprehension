@@ -19,6 +19,13 @@ pipeline {
             }
         }
 
+        stage('Security Scan (Trivy)') {
+            steps {
+                echo 'Scanning Docker image for vulnerabilities...'
+                bat 'cmd /c "trivy image --severity HIGH,CRITICAL ai-code-reviewer"'
+            }
+        }
+
         stage('Run Container Smoke Test') {
             steps {
                 script {
