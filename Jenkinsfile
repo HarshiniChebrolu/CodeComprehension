@@ -22,7 +22,6 @@ pipeline {
         stage('Security Scan (Trivy)') {
             steps {
                 echo 'Scanning Docker image for vulnerabilities...'
-                // Added --exit-code 0 so Trivy reports vulnerabilities without failing the build
                 bat 'C:/Users/chebr/AppData/Local/Microsoft/WinGet/Packages/AquaSecurity.Trivy_Microsoft.Winget.Source_8wekyb3d8bbwe/trivy.exe image --severity HIGH,CRITICAL --exit-code 0 ai-code-reviewer'
             }
         }
@@ -36,8 +35,8 @@ pipeline {
                     ]) {
                         echo 'Validating container health and execution...'
                         
-                        // Clean up stale container safely using cmd /c
-                        bat 'cmd /c "docker rm -f code-reviewer-test || true"'
+                        // Clean up stale container safely using Windows-compatible 'rem'
+                        bat 'cmd /c "docker rm -f code-reviewer-test || rem"'
                         
                         // Start the container
                         bat "docker run --rm -d -p 5000:5000 -e GEMINI_API_KEY=${GEMINI_API_KEY} -e OPENAI_API_KEY=${OPENAI_API_KEY} --name code-reviewer-test ${IMAGE_NAME}"
@@ -45,8 +44,8 @@ pipeline {
                         // Wait 5 seconds
                         bat "ping 127.0.0.1 -n 6 > nul"
                         
-                        // Stop container safely using cmd /c
-                        bat 'cmd /c "docker stop code-reviewer-test || true"'
+                        // Stop container safely using Windows-compatible 'rem'
+                        bat 'cmd /c "docker stop code-reviewer-test || rem"'
                     }
                 }
             }
