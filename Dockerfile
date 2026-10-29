@@ -1,6 +1,6 @@
 # ==============================================================================
 # Multi-stage Dockerfile for CodeComprehension
-# Runs under non-root user 'codeuser' with healthcheck probe & security hardening
+# Runs under non-root user 'codeuser' with healthcheck probe
 # ==============================================================================
 
 FROM python:3.12-slim AS builder
@@ -10,9 +10,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Update OS packages to patch vulnerabilities
-RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
@@ -34,9 +32,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOST=0.0.0.0 \
     DATABASE_PATH=/app/codecomprehension.db
 
-# Update runtime OS packages and install curl for healthcheck probe
-RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
+# Install runtime curl for healthcheck probe
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
