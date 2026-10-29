@@ -50,11 +50,29 @@ pipeline {
                 }
             }
         }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'GEMINI_API_KEY', variable: 'GEMINI_KEY'),
+                    string(credentialsId: 'OPENAI_API_KEY', variable: 'OPENAI_KEY'),
+                    string(credentialsId: 'SECRET_KEY', variable: 'FLASK_SECRET')
+                ]) {
+                    bat '''
+                        kubectl delete secret api-secrets --ignore-not-found=true
+                        kubectl create secret generic api-secrets --from-literal=GEMINI_API_KEY="%GEMINI_KEY%" --from-literal=OPENAI_API_KEY="%OPENAI_KEY%" --from-literal=SECRET_KEY="%FLASK_SECRET%"
+                        kubectl apply -f k8s/deployment.yaml
+                        kubectl apply -f k8s/service.yaml
+                        kubectl rollout restart deployment code-comprehension-deployment
+                    '''
+                }
+            }
+        }
     }
 
     post {
         success {
-            echo 'Pipeline completed successfully! Docker image is verified.'
+            echo 'Pipeline completed successfully! Application is built, scanned, tested, and deployed to Kubernetes.'
         }
         failure {
             echo 'Pipeline failed. Check the logs above.'
