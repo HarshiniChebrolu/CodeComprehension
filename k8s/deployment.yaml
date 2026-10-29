@@ -1,1 +1,45 @@
-
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-comprehension-deployment
+  labels:
+    app: code-comprehension
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: code-comprehension
+  template:
+    metadata:
+      labels:
+        app: code-comprehension
+    spec:
+      containers:
+      - name: code-comprehension
+        image: ai-code-reviewer:latest
+        imagePullPolicy: Never # Uses your locally built Docker image
+        ports:
+        - containerPort: 5000
+        env:
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: GEMINI_API_KEY
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: OPENAI_API_KEY
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 5
